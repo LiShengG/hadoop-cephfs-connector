@@ -53,9 +53,8 @@ import org.slf4j.LoggerFactory;
  * 修正 —— 架构文档 §4 差异表），所有 CephFS 调用经由 {@link CephFsProto}
  * （生产实现 {@link CephTalker}；单测注入 Mockito mock）。
  *
- * <p><b>T03 交付范围</b>：生命周期 + 全部元数据操作。数据流方法
- * {@link #open(Path, int)} / {@link #create} / {@link #append} 为显式留桩
- * （抛 {@link UnsupportedOperationException}），T04 实现。
+ * <p><b>T03 交付范围</b>：生命周期 + 全部元数据操作。T04 补齐数据流方法
+ * {@link #open(Path, int)} / {@link #create} / {@link #append}。
  *
  * <p><b>workingDir</b>：纯 Java 侧维护（不使用 ceph_chdir），初始
  * {@code /user/<ugi.shortUserName>}（架构文档 §4-7）。
@@ -524,23 +523,176 @@ public class CephFileSystem extends FileSystem {
 
   @Override
   public FSDataInputStream open(Path f, int bufferSize) throws IOException {
-    throw new UnsupportedOperationException(
-        "open() is not implemented yet (T04: data streams)");
+    Path abs = makeAbsolute(f);
+    CephStat stat = new CephStat();
+    try {
+      proto.lstat(abs, stat);
+    } catch (IOException e) {
+      throw mapCephException(e, abs);
+    }
+    if (stat.isDir()) {
+      throw new FileNotFoundException("Cannot open directory for read: " + abs);
+    }
+
+    int streamBufferSize = streamBufferSize();
+    int fd;
+    try {
+      fd = proto.open(abs, CephMount.O_RDONLY, 0);
+    } catch (IOException e) {
+      throw mapCephException(e, abs);
+    }
+    return new FSDataInputStream(new CephInputStream(proto, fd, stat.size,
+        streamBufferSize, statistics));
   }
 
   @Override
   public FSDataOutputStream create(Path f, FsPermission permission,
       boolean overwrite, int bufferSize, short replication, long blockSize,
       Progressable progress) throws IOException {
-    throw new UnsupportedOperationException(
-        "create() is not implemented yet (T04: data streams)");
+    return createInternal(f, permission, overwrite, blockSize, true);
+  }
+
+  @Override
+  public FSDataOutputStream createNonRecursive(Path f, FsPermission permission,
+      boolean overwrite, int bufferSize, short replication, long blockSize,
+      Progressable progress) throws IOException {
+    return createInternal(f, permission, overwrite, blockSize, false);
   }
 
   @Override
   public FSDataOutputStream append(Path f, int bufferSize, Progressable progress)
       throws IOException {
-    throw new UnsupportedOperationException(
-        "append() is not implemented yet (T04: data streams)");
+    Path abs = makeAbsolute(f);
+    CephStat stat = new CephStat();
+    try {
+      proto.lstat(abs, stat);
+    } catch (IOException e) {
+      throw mapCephException(e, abs);
+    }
+    if (stat.isDir()) {
+      throw new FileNotFoundException("Cannot append to directory: " + abs);
+    }
+
+    int streamBufferSize = streamBufferSize();
+    int fd;
+    try {
+      fd = proto.open(abs, CephMount.O_WRONLY | CephMount.O_APPEND, 0);
+    } catch (IOException e) {
+      throw mapCephException(e, abs);
+    }
+    CephOutputStream out =
+        new CephOutputStream(proto, fd, streamBufferSize, statistics);
+    return new FSDataOutputStream(out, null, stat.size);
+  }
+
+  private FSDataOutputStream createInternal(Path f, FsPermission permission,
+      boolean overwrite, long blockSize, boolean createParent) throws IOException {
+    Path abs = makeAbsolute(f);
+    boolean exists = true;
+    CephStat stat = new CephStat();
+    try {
+      proto.lstat(abs, stat);
+      if (stat.isDir()) {
+        throw new FileAlreadyExistsException(
+            "Cannot create file over directory: " + abs);
+      }
+      if (!overwrite) {
+        throw new FileAlreadyExistsException("File already exists: " + abs);
+      }
+    } catch (FileNotFoundException e) {
+      exists = false;
+    } catch (IOException e) {
+      throw mapCephException(e, abs);
+    }
+
+    ensureCreateParent(abs, createParent);
+
+    FsPermission perm = permission != null ? permission : FsPermission.getFileDefault();
+    int mode = perm.applyUMask(FsPermission.getUMask(getConf())).toShort();
+    int flags = CephMount.O_WRONLY | CephMount.O_CREAT;
+    if (exists && overwrite) {
+      flags |= CephMount.O_TRUNC;
+    } else {
+      flags |= CephMount.O_EXCL;
+    }
+
+    long effectiveBlockSize = blockSize > 0 ? blockSize : getDefaultBlockSize();
+    int objectSize = layoutSize(effectiveBlockSize, "objectSize");
+    int stripeUnit = layoutSize(Math.min(effectiveBlockSize, getDefaultBlockSize()),
+        "stripeUnit");
+    String dataPool = firstDataPool();
+    int streamBufferSize = streamBufferSize();
+
+    int fd;
+    try {
+      fd = proto.open(abs, flags, mode, stripeUnit, 1, objectSize, dataPool);
+    } catch (IOException e) {
+      throw mapCephException(e, abs);
+    }
+    CephOutputStream out =
+        new CephOutputStream(proto, fd, streamBufferSize, statistics);
+    return new FSDataOutputStream(out, null, 0);
+  }
+
+  private void ensureCreateParent(Path abs, boolean createParent) throws IOException {
+    Path parent = abs.getParent();
+    if (parent == null || parent.isRoot()) {
+      return;
+    }
+
+    CephStat parentStat = new CephStat();
+    try {
+      proto.lstat(parent, parentStat);
+      if (!parentStat.isDir()) {
+        throw new ParentNotDirectoryException(
+            "Parent path is not a directory: " + parent);
+      }
+      return;
+    } catch (FileNotFoundException e) {
+      if (!createParent) {
+        throw new FileNotFoundException(
+            "Parent directory does not exist: " + parent);
+      }
+    } catch (IOException e) {
+      throw mapCephException(e, parent);
+    }
+
+    mkdirs(parent, FsPermission.getDirDefault());
+  }
+
+  private int streamBufferSize() {
+    int size = getConf().getInt(CephConfigKeys.CEPH_CLIENT_BUFFER_SIZE_KEY,
+        CephConfigKeys.CEPH_CLIENT_BUFFER_SIZE_DEFAULT);
+    return size > 0 ? size : CephConfigKeys.CEPH_CLIENT_BUFFER_SIZE_DEFAULT;
+  }
+
+  private int layoutSize(long size, String name) throws IOException {
+    if (size <= 0 || size > Integer.MAX_VALUE) {
+      throw new IOException("Invalid CephFS layout " + name + ": " + size);
+    }
+    return (int) size;
+  }
+
+  private String firstDataPool() {
+    String pools = getConf().get(CephConfigKeys.CEPH_DATA_POOLS_KEY,
+        CephConfigKeys.CEPH_DATA_POOLS_DEFAULT);
+    if (pools == null) {
+      return null;
+    }
+    for (String pool : pools.split(",")) {
+      String trimmed = pool.trim();
+      if (!trimmed.isEmpty()) {
+        return trimmed;
+      }
+    }
+    return null;
+  }
+
+  int openFileDescriptorCountForTests() {
+    if (proto instanceof CephTalker) {
+      return ((CephTalker) proto).openFileDescriptorCount();
+    }
+    return -1;
   }
 
   // ── 工具 ──────────────────────────────────────────────────────────────

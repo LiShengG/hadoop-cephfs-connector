@@ -7,7 +7,7 @@
 | T01 环境验证与 Java 绑定构建 | DONE | 2026-07-05 | smoke test 全链路通过；产物见 dist/native 与本地 Maven 仓库 |
 | T02 Maven 骨架与抽象层 | DONE | 2026-07-05 | mvn test 15/15 绿色；ITestCephTalker 6/6 通过；CephFsProto 签名已冻结（见 T02 节） |
 | T03 元数据操作 | DONE | 2026-07-05 | mvn clean test 69/69 绿；ITestCephFileSystemMeta 5/5 通过（含 ServiceLoader 发现验证）；open/create/append 留桩待 T04 |
-| T04 数据读写流 | 未开始 | — | |
+| T04 数据读写流 | DONE | 2026-07-05 | mvn clean test 95/95 绿；ITestCephIO 3/3 通过（200MB md5/pread/append/hflush/fd 计数） |
 | T05 BlockLocation 与 AbstractFileSystem | 未开始 | — | |
 | T06 契约测试与集成验证 | 未开始 | — | |
 | T07 打包部署与文档 | 未开始 | — | |
@@ -214,3 +214,51 @@
   - close() 幂等由 AtomicBoolean 保证，且先 super.close()（处理 deleteOnExit）
     再 proto.shutdown()；T04 流的 close 与 fs.close 互不代替。
 - 环境变更：无（集群未变更，测试目录均已清理；本地 Maven 仓库无新增）。
+
+---
+
+## T04 数据读写流实现 — DONE（2026-07-05）
+
+- 验收结果：
+  1. ✅ 无集群 `mvn clean test`（`hadoop-cephfs/`，未设 `CEPH_CONTRACT_TEST`）：
+     surefire `Tests run: 95, Failures: 0, Errors: 0, Skipped: 0`，BUILD SUCCESS。
+     新增/更新 mock 覆盖：`TestCephInputStream` 7 例（缓冲读、EOF=-1、缓冲内/外 seek、
+     positioned read 不移动当前位置、available、关闭后读/seek 抛 IOException）；
+     `TestCephOutputStream` 7 例（跨缓冲写、hflush/hsync→proto.flush、close 幂等且失败仍关 fd、
+     capability、关闭后写失败）；`TestCephFileSystemIO` 13 例（open 目录→FNF、create 分支矩阵、
+     createNonRecursive、layout/data pool、append 初始位置与异常分支）。
+  2. ✅ 集群运行中执行 `CEPH_CONTRACT_TEST=1 mvn verify -Dit.test=ITestCephIO`
+     （需非网络隔离环境访问 vstart Ceph）：failsafe `Tests run: 3, Failures: 0, Errors: 0, Skipped: 0`，
+     BUILD SUCCESS。覆盖 200MB 随机文件写入、顺序 md5 回读一致、100 次随机 pread 与本地副本一致、
+     append 内容/长度正确、`hflush` 后第二个 FileSystem 实例可见。
+  3. ✅ create/append/open 异常分支按 Hadoop 规范单测钉死：已存在且 `!overwrite`、已存在目录、
+     父目录缺失递归创建、父路径为文件、`createNonRecursive` 父缺失、append/open 不存在或目录。
+  4. ✅ 无资源泄漏：`CephTalker` 增加包内 fd 计数器，`ITestCephIO` 在每次流关闭后断言
+     `openFileDescriptorCountForTests()==0`。
+- 交付物清单：
+  - `hadoop-cephfs/src/main/java/org/apache/hadoop/fs/ceph/CephInputStream.java`
+  - `hadoop-cephfs/src/main/java/org/apache/hadoop/fs/ceph/CephOutputStream.java`
+  - `hadoop-cephfs/src/main/java/org/apache/hadoop/fs/ceph/CephFileSystem.java`
+    （补全 `open/create/createNonRecursive/append`）
+  - `hadoop-cephfs/src/main/java/org/apache/hadoop/fs/ceph/CephTalker.java`
+    （包内 fd 计数器，仅测试断言使用）
+  - `hadoop-cephfs/src/test/java/org/apache/hadoop/fs/ceph/TestCephInputStream.java`
+  - `hadoop-cephfs/src/test/java/org/apache/hadoop/fs/ceph/TestCephOutputStream.java`
+  - `hadoop-cephfs/src/test/java/org/apache/hadoop/fs/ceph/TestCephFileSystemIO.java`
+  - `hadoop-cephfs/src/test/java/org/apache/hadoop/fs/ceph/ITestCephIO.java`
+  - `hadoop-cephfs/src/test/java/org/apache/hadoop/fs/ceph/TestCephFileSystemMeta.java`
+    （移除 T03 留桩断言）
+- 与设计文档的偏差：无。实现补充：为避免 `FSDataOutputStream` 与 `CephOutputStream`
+  双重统计写字节，`CephFileSystem` 包装输出流时向 `FSDataOutputStream` 传 `stats=null`，
+  由 `CephOutputStream` 自行递增 `FileSystem.statistics`；输入流直接递增读字节。
+- 遗留/移交事项（给 T05）：
+  - `getFileBlockLocations` 仍未实现，保持 T05 边界；T05 可按任务书使用 `proto.getFileExtent`
+    / `getOsdAddress`，必要时临时 `O_RDONLY` 打开文件并确保关闭 fd。
+  - `CephInputStream` 的普通读和 positioned read 均使用 `proto.read(fd, ..., offset)` 显式偏移，
+    不依赖 native fd 当前位置；`seek` 仅维护 Java 侧位置和缓冲状态。
+  - `CephTalker.openFileDescriptorCount()` 与 `CephFileSystem.openFileDescriptorCountForTests()`
+    为包内测试辅助，不属于公共接口。
+  - `ITestCephFileSystemMeta` 仍保留 T03 的辅助 `CephTalker` 造文件方式；T05/T06 如需可再用
+    `fs.create` 简化，T04 未做非必要改动。
+- 环境变更：无（集成测试目录均已清理；vstart 集群状态未调整）。注意真实集群测试不能在
+  Codex 默认网络隔离 sandbox 内运行，需非网络隔离执行。

@@ -20,6 +20,7 @@ package org.apache.hadoop.fs.ceph;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.URI;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.ceph.fs.CephFileExtent;
 import com.ceph.fs.CephMount;
@@ -51,6 +52,7 @@ class CephTalker extends CephFsProto {
 
   /** null 表示未 initialize 或已 shutdown。 */
   private volatile CephMount mount;
+  private final AtomicInteger openFileDescriptors = new AtomicInteger();
 
   @Override
   void initialize(URI uri, Configuration conf) throws IOException {
@@ -233,14 +235,18 @@ class CephTalker extends CephFsProto {
 
   @Override
   int open(Path path, int flags, int mode) throws IOException {
-    return mnt().open(pathString(path), flags, mode);
+    int fd = mnt().open(pathString(path), flags, mode);
+    openFileDescriptors.incrementAndGet();
+    return fd;
   }
 
   @Override
   int open(Path path, int flags, int mode, int stripeUnit, int stripeCount,
       int objectSize, String dataPool) throws IOException {
-    return mnt().open(pathString(path), flags, mode,
+    int fd = mnt().open(pathString(path), flags, mode,
         stripeUnit, stripeCount, objectSize, dataPool);
+    openFileDescriptors.incrementAndGet();
+    return fd;
   }
 
   @Override
@@ -266,6 +272,7 @@ class CephTalker extends CephFsProto {
   @Override
   void close(int fd) throws IOException {
     mnt().close(fd);
+    openFileDescriptors.decrementAndGet();
   }
 
   @Override
@@ -288,5 +295,9 @@ class CephTalker extends CephFsProto {
   @Override
   InetAddress getOsdAddress(int osd) throws IOException {
     return mnt().get_osd_address(osd);
+  }
+
+  int openFileDescriptorCount() {
+    return openFileDescriptors.get();
   }
 }

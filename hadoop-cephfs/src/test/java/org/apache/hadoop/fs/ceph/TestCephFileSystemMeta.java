@@ -339,19 +339,6 @@ public class TestCephFileSystemMeta {
     f.close();
   }
 
-  // ── 数据流留桩（T04） ─────────────────────────────────────────────────
-
-  @Test
-  public void testDataMethodsAreExplicitStubs() {
-    assertThrows(UnsupportedOperationException.class,
-        () -> fs.open(new Path("/f"), 4096));
-    assertThrows(UnsupportedOperationException.class,
-        () -> fs.create(new Path("/f"), FsPermission.getFileDefault(), true,
-            4096, (short) 3, 64L << 20, null));
-    assertThrows(UnsupportedOperationException.class,
-        () -> fs.append(new Path("/f"), 4096, null));
-  }
-
   // ── 异常映射（工作内容 4：集中 helper） ────────────────────────────────
 
   @Test
