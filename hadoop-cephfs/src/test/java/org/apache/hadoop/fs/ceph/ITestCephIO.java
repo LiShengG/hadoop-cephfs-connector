@@ -168,6 +168,37 @@ public class ITestCephIO {
   }
 
   @Test
+  public void testCreateOverwriteTruncatesExisting() throws Exception {
+    // T04-verify 补充：overwrite=true 走 O_TRUNC + 7 参 layout open 打开已存在文件，
+    // 原 ITest 仅覆盖 overwrite=false，此分支此前未在真实集群上验证过。
+    Path file = new Path(base, "overwrite.bin");
+    byte[] big = new byte[3 * IO_CHUNK];
+    new Random(20260707L).nextBytes(big);
+    byte[] small = bytes("overwritten");
+
+    try (FSDataOutputStream out = fs.create(file, FsPermission.getFileDefault(),
+        false, 4096, (short) 3, fs.getDefaultBlockSize(), null)) {
+      out.write(big);
+    }
+    assertNoOpenFds(fs);
+    assertEquals(big.length, fs.getFileStatus(file).getLen());
+
+    try (FSDataOutputStream out = fs.create(file, FsPermission.getFileDefault(),
+        true, 4096, (short) 3, fs.getDefaultBlockSize(), null)) {
+      out.write(small);
+    }
+    assertNoOpenFds(fs);
+    assertEquals(small.length, fs.getFileStatus(file).getLen());
+
+    byte[] actual = new byte[small.length];
+    try (FSDataInputStream in = fs.open(file)) {
+      in.readFully(0, actual);
+    }
+    assertNoOpenFds(fs);
+    assertArrayEquals(small, actual);
+  }
+
+  @Test
   public void testHflushVisibleFromAnotherFileSystem() throws Exception {
     Path file = new Path(base, "flush.txt");
     byte[] visible = bytes("visible after hflush");

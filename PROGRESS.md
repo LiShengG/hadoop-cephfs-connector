@@ -262,3 +262,35 @@
     `fs.create` 简化，T04 未做非必要改动。
 - 环境变更：无（集成测试目录均已清理；vstart 集群状态未调整）。注意真实集群测试不能在
   Codex 默认网络隔离 sandbox 内运行，需非网络隔离执行。
+
+### T04 独立验收（2026-07-05，验收 agent）— 通过
+
+- 验收标准逐条复核（均 ✅）：
+  1. 无集群 `mvn clean test`：`Tests run: 95, Failures: 0, Errors: 0, Skipped: 0`，
+     BUILD SUCCESS；另跑无门控 `mvn verify`：failsafe `Tests run: 14, Skipped: 14`
+     （ITestCephTalker 6 + ITestCephFileSystemMeta 5 + ITestCephIO 3 全部正确 skip），仍绿。
+  2. 集群健康（HEALTH_WARN 单 OSD 正常告警、mds 1/1 up）下
+     `CEPH_CONTRACT_TEST=1 mvn verify -Dit.test=ITestCephIO`：3/3 通过
+     （200MB md5、100 次随机 pread、append、hflush 跨实例可见）；验收补充用例后复跑 4/4 通过。
+  3. 异常分支与 filesystem.md 逐条比对一致（create !overwrite→FileAlreadyExists、
+     create 目标为目录→FileAlreadyExists、父为文件→ParentNotDirectory、
+     createNonRecursive 父缺失→FNF、append/open 不存在或目录→FNF，均为规范允许集合内的选择）。
+  4. fd 泄漏断言存在（CephTalker.openFileDescriptorCount，仅增量式改动、未动冻结签名）
+     且 ITestCephIO 每次流关闭后断言归零，通过。
+- 代码走查确认：seek 缓冲命中/失效正确、close 幂等（AtomicBoolean）、关闭后读写抛
+  IOException、EOF 返回 -1；hflush/hsync 刷缓冲后 proto.flush（InOrder 单测钉死）、
+  StreamCapabilities 正确；create 的 O_* 全部用 CephMount 常量、blockSize→objectSize +
+  stripe_count=1 下发、data pool 取第一项；statistics 读写字节接入且无双重计数；
+  git diff b65f951..HEAD 中元数据方法零改动（仅移除 T03 留桩），CephFsProto/CephConfigKeys
+  未被触碰。
+- 验收发现并补齐的小问题（功能本身正确）：
+  - ITestCephIO 原 3 例的 create 均为 overwrite=false，O_TRUNC 覆盖已存在文件
+    （7 参 layout open 打开已存在文件）分支未在真实集群验证过。已先以独立驱动程序在
+    真实集群抽查通过（3MB→截断为 11 字节，内容一致），并补充集成用例
+    `testCreateOverwriteTruncatesExisting`，复跑 `CEPH_CONTRACT_TEST=1 mvn verify
+    -Dit.test=ITestCephIO` 4/4 通过。
+- 观察项（非缺陷，移交 T06 契约测试关注）：
+  - create 的 stripe_unit=min(blockSize, ceph.object.size)，若用户传入的 blockSize
+    不是 stripe_unit 的整数倍（如非 2 幂的 100MB），Ceph 会以 EINVAL 拒绝 layout，
+    表现为 IOException（规范允许拒绝非法块大小，但报错信息较隐晦）。
+- 结论：T04 验收通过，T05 可以启动。
