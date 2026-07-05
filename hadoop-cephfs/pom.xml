@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>org.apache.hadoop</groupId>
+  <artifactId>hadoop-cephfs</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>jar</packaging>
+
+  <name>Hadoop CephFS Connector</name>
+  <description>Hadoop FileSystem / AbstractFileSystem backend for CephFS (ceph:// scheme)</description>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <!-- Java 8 字节码目标，保证与 Hadoop 3.3.6 运行时兼容（架构文档 §6.1） -->
+    <maven.compiler.release>8</maven.compiler.release>
+    <hadoop.version>3.3.6</hadoop.version>
+    <libcephfs.version>16.2.14</libcephfs.version>
+    <!-- JNI 运行时路径（docs/ENV.md §3）。非默认环境可用 -Dceph.lib.dir=... 覆盖。 -->
+    <ceph.lib.dir>/home/lsh/code/ceph/build/lib</ceph.lib.dir>
+    <ceph.jni.dir>${project.basedir}/../dist/native</ceph.jni.dir>
+    <test.library.path>${ceph.jni.dir}:${ceph.lib.dir}</test.library.path>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-common</artifactId>
+      <version>${hadoop.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.ceph</groupId>
+      <artifactId>libcephfs</artifactId>
+      <version>${libcephfs.version}</version>
+      <scope>compile</scope>
+    </dependency>
+
+    <!-- test -->
+    <dependency>
+      <groupId>junit</groupId>
+      <artifactId>junit</artifactId>
+      <version>4.13.2</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-core</artifactId>
+      <version>3.12.4</version>
+      <scope>test</scope>
+    </dependency>
+    <!-- Hadoop FileSystem 契约测试基类（T06 使用） -->
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-common</artifactId>
+      <version>${hadoop.version}</version>
+      <type>test-jar</type>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.8.1</version>
+      </plugin>
+      <!-- 单元测试（Test*）。JNI 路径与环境变量透传：docs/ENV.md §3。 -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.0.0-M5</version>
+        <configuration>
+          <argLine>-Djava.library.path=${test.library.path}</argLine>
+          <environmentVariables>
+            <LD_LIBRARY_PATH>${ceph.lib.dir}</LD_LIBRARY_PATH>
+            <!-- 未设置时解析为字面量 "${env.CEPH_CONTRACT_TEST}"，不等于 "1"，门控依然关闭 -->
+            <CEPH_CONTRACT_TEST>${env.CEPH_CONTRACT_TEST}</CEPH_CONTRACT_TEST>
+          </environmentVariables>
+        </configuration>
+      </plugin>
+      <!-- 集成测试（ITest*，需真实集群，CEPH_CONTRACT_TEST=1 门控） -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <version>3.0.0-M5</version>
+        <configuration>
+          <includes>
+            <include>**/ITest*.java</include>
+          </includes>
+          <argLine>-Djava.library.path=${test.library.path}</argLine>
+          <environmentVariables>
+            <LD_LIBRARY_PATH>${ceph.lib.dir}</LD_LIBRARY_PATH>
+            <CEPH_CONTRACT_TEST>${env.CEPH_CONTRACT_TEST}</CEPH_CONTRACT_TEST>
+          </environmentVariables>
+        </configuration>
+        <executions>
+          <execution>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
