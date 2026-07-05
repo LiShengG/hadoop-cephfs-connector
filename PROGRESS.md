@@ -8,7 +8,7 @@
 | T02 Maven 骨架与抽象层 | DONE | 2026-07-05 | mvn test 15/15 绿色；ITestCephTalker 6/6 通过；CephFsProto 签名已冻结（见 T02 节） |
 | T03 元数据操作 | DONE | 2026-07-05 | mvn clean test 69/69 绿；ITestCephFileSystemMeta 5/5 通过（含 ServiceLoader 发现验证）；open/create/append 留桩待 T04 |
 | T04 数据读写流 | DONE | 2026-07-05 | mvn clean test 95/95 绿；ITestCephIO 3/3 通过（200MB md5/pread/append/hflush/fd 计数） |
-| T05 BlockLocation 与 AbstractFileSystem | 未开始 | — | |
+| T05 BlockLocation 与 AbstractFileSystem | DONE | 2026-07-05 | mvn clean test 120/120 绿；ITestCephBlockLocation 4/4、ITestCephFileContext 4/4 通过；host 与 ceph osd dump 一致 |
 | T06 契约测试与集成验证 | 未开始 | — | |
 | T07 打包部署与文档 | 未开始 | — | |
 
@@ -294,3 +294,73 @@
     不是 stripe_unit 的整数倍（如非 2 幂的 100MB），Ceph 会以 EINVAL 拒绝 layout，
     表现为 IOException（规范允许拒绝非法块大小，但报错信息较隐晦）。
 - 结论：T04 验收通过，T05 可以启动。
+
+---
+
+## T05 BlockLocation 与 AbstractFileSystem — DONE（2026-07-05）
+
+- 验收结果：
+  1. ✅ 无集群 `mvn clean test`（`hadoop-cephfs/`，未设 CEPH_CONTRACT_TEST）：
+     `Tests run: 120, Failures: 0, Errors: 0, Skipped: 0`，BUILD SUCCESS。
+     T05 新增 mock/结构单测 25 例：TestCephBlockLocation 16（基类契约分支 6 +
+     切分正确性 5 + 降级路径 5，含跨对象边界/start 非对齐/len 超文件尾/
+     Long.MAX_VALUE 不溢出/OSD 解析失败降级 localhost/getFileExtent 失败按
+     blockSize 步进降级/混合失败仅降级失败 extent/异常传播时 finally 关 fd）、
+     TestCephFileSystemStatus 6（statfs→FsStatus 映射、frsize=0 回退 bsize、
+     getDefaultBlockSize(Path)、getServerDefaults 双重载、getContentSummary
+     基类默认实现汇总正确）、TestCephFs 3（DelegateToFileSystem 继承、
+     (URI,Configuration) 构造器、默认端口 6789）。另验证无门控 `mvn verify`
+     failsafe `Tests run: 23, Skipped: 23` 仍绿。
+  2. ✅ 集群运行中（smoke-test.sh 先行通过）执行
+     `CEPH_CONTRACT_TEST=1 mvn verify -Dit.test=ITestCephBlockLocation,ITestCephFileContext`：
+     failsafe `Tests run: 8, Failures: 0, Errors: 0, Skipped: 0`，BUILD SUCCESS。
+     3×objectSize（4MB×3）文件 BlockLocation 数量=3、offset/length 逐块正确、
+     host 非空且非降级值；实测 hosts=[10.255.255.254]，与
+     `ceph osd dump` 中 osd.0 地址 `v2:10.255.255.254:6800/...` 一致（vstart 单机）。
+     另复跑全部门控 IT：23/23 通过（ITestCephTalker 6 + Meta 5 + IO 4 +
+     BlockLocation 4 + FileContext 4），T02–T04 行为无回归。
+  3. ✅ FileContext 路径可用：`FileContext.getFileContext(URI.create("ceph:///"), conf)`
+     全链路 mkdir/create/open/rename/delete/listStatus/getFsStatus 走通
+     （ITestCephFileContext.testFileContextFullRoundTrip）；且负向用例证明
+     `fs.AbstractFileSystem.ceph.impl` 即生效点（不配置该键 →
+     UnsupportedFileSystemException）。
+  4. ✅ `getStatus()`：实测 capacity=106287857664 B（≈99 GiB）、used=0、
+     remaining=106287857664 B；与 `ceph df` 同量级（RAW TOTAL 101 GiB、
+     MAX AVAIL 99 GiB；数据池仅存 21 B，按 4MB frsize 取整后 used 为 0，合理）。
+- 交付物清单：
+  - `hadoop-cephfs/src/main/java/org/apache/hadoop/fs/ceph/CephFileSystem.java`
+    （新增 getFileBlockLocations、getDefaultBlockSize(Path)、getServerDefaults×2、
+    getStatus(Path)；元数据/流方法零改动）
+  - `hadoop-cephfs/src/main/java/org/apache/hadoop/fs/ceph/CephFs.java`
+  - 测试：`TestCephBlockLocation.java`、`TestCephFileSystemStatus.java`、
+    `TestCephFs.java`、`ITestCephBlockLocation.java`、`ITestCephFileContext.java`、
+    `CephFsTestHelper.java`（增补 CephFileExtent 反射构造 helper）
+- 与设计文档的偏差：无（实现口径补充，均在架构文档许可范围内）：
+  1. BlockLocation 的 hosts/names 用 OSD 地址的 IP 文本（InetAddress.getHostAddress，
+     不做反向 DNS），与 `ceph osd dump` 直接可比；names 无端口
+     （CephMount.get_osd_address 仅返回 InetAddress，无 OSD 端口）。
+  2. 降级细化：getOsdAddress 失败/OSD 列表为空 → 该 extent hosts 降级
+     ["localhost"]（长度仍按 extent）；getFileExtent 本身失败 → 该段按
+     FileStatus.blockSize 步进且 hosts 降级；均 warn 不抛，与任务书
+     "不让作业提交失败"一致。temp fd 以 finally 兜底关闭（含 RuntimeException 路径）。
+  3. getServerDefaults 的 checksumType 报 DataChecksum.Type.NULL
+     （CephFS 无客户端校验和，完整性由 RADOS 负责）；bytesPerChecksum 沿用
+     基类同源的 "io.bytes.per.checksum"（Hadoop 无公开常量）。
+  4. getStatus 的 used = capacity - remaining（CephStatVFS 无 bfree 字段，
+     JNI 未透传 f_bfree）；p=null 时对根 "/" statfs（CephFS 单一分区）。
+  5. CephFs 构造器为 public（AbstractFileSystem 反射 setAccessible 本可用
+     包可见，公开便于直接引用；RawLocalFs 因同包才用包可见）。
+- 遗留/移交事项（给 T06）：
+  - 契约测试 fs.contract 声明可参考：rename 语义 §4-1、不支持 concat/truncate、
+    setReplication 返回 false；T04 观察项（blockSize 非 stripe_unit 整数倍 →
+    EINVAL IOException）仍待契约测试确认口径。
+  - FileContext/AbstractFileSystem 无 close 钩子：CephFs 内部的 CephFileSystem
+    mount 生命周期与 JVM 相同（FileContext 缓存），vstart 下无害；
+    契约测试若并发创建大量 FileContext 需留意 mount 数。
+  - `fs.AbstractFileSystem.ceph.impl` 需用户显式配置（AbstractFileSystem 无
+    ServiceLoader 机制），T07 部署文档必须写入 core-site.xml 样例。
+  - getFileBlockLocations 的 topologyPaths 留空（无 crush 机架感知，任务书边界），
+    后续迭代可用 CephMount.get_osd_crush_location 补齐。
+  - CLI `hadoop fs -stat` / `df` 走 getStatus，已可用；`getContentSummary`
+    为基类默认实现（Java 侧递归），超大目录树性能一般，暂无优化必要。
+- 环境变更：无（集成测试目录均已清理；vstart 集群未调整，仍运行中）。

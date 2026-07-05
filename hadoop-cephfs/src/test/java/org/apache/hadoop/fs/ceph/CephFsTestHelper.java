@@ -24,9 +24,11 @@ import static org.mockito.Mockito.doThrow;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.net.URI;
 
+import com.ceph.fs.CephFileExtent;
 import com.ceph.fs.CephStat;
 
 import org.apache.hadoop.conf.Configuration;
@@ -100,6 +102,21 @@ final class CephFsTestHelper {
   static void mockLstatMissing(CephFsProto proto, Path path) throws IOException {
     doThrow(new FileNotFoundException(path.toString()))
         .when(proto).lstat(eq(path), any(CephStat.class));
+  }
+
+  /**
+   * 反射构造 {@link CephFileExtent}（T05）：其构造器为包可见（native 侧填充），
+   * mock 场景与 CephStat 同法处理。
+   */
+  static CephFileExtent extent(long offset, long length, int[] osds) {
+    try {
+      Constructor<CephFileExtent> ctor = CephFileExtent.class
+          .getDeclaredConstructor(long.class, long.class, int[].class);
+      ctor.setAccessible(true);
+      return ctor.newInstance(offset, length, osds);
+    } catch (ReflectiveOperationException e) {
+      throw new AssertionError("cannot construct CephFileExtent", e);
+    }
   }
 
   static void copyStat(CephStat from, CephStat to) {

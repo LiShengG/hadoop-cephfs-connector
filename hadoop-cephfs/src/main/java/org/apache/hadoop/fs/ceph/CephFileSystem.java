@@ -19,29 +19,40 @@ package org.apache.hadoop.fs.ceph;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.ceph.fs.CephFileAlreadyExistsException;
+import com.ceph.fs.CephFileExtent;
 import com.ceph.fs.CephMount;
 import com.ceph.fs.CephNotDirectoryException;
 import com.ceph.fs.CephStat;
+import com.ceph.fs.CephStatVFS;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.BlockLocation;
+import org.apache.hadoop.fs.CommonConfigurationKeysPublic;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileAlreadyExistsException;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.FsServerDefaults;
+import org.apache.hadoop.fs.FsStatus;
 import org.apache.hadoop.fs.ParentNotDirectoryException;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.PathIsNotEmptyDirectoryException;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.security.UserGroupInformation;
+import org.apache.hadoop.util.DataChecksum;
 import org.apache.hadoop.util.Progressable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -491,6 +502,157 @@ public class CephFileSystem extends FileSystem {
   @Override
   public long getDefaultBlockSize() {
     return defaultBlockSize;
+  }
+
+  @Override
+  public long getDefaultBlockSize(Path f) {
+    // CephFS 的 blockSize 是全局 layout 配置（ceph.object.size），与路径无关
+    return getDefaultBlockSize();
+  }
+
+  @SuppressWarnings("deprecation")
+  @Override
+  @Deprecated
+  public FsServerDefaults getServerDefaults() throws IOException {
+    Configuration conf = getConf();
+    // CephFS 无客户端校验和（数据完整性由 RADOS 负责）→ checksum type NULL；
+    // writePacketSize 沿用 Hadoop 惯例值 64KB（对 CephFS 仅为报告值）。
+    return new FsServerDefaults(
+        getDefaultBlockSize(),
+        conf.getInt("io.bytes.per.checksum", 512), // 与 FileSystem 基类同源（无公开常量）
+        64 * 1024,
+        getDefaultReplication(),
+        streamBufferSize(),
+        false,
+        conf.getLong(CommonConfigurationKeysPublic.FS_TRASH_INTERVAL_KEY,
+            CommonConfigurationKeysPublic.FS_TRASH_INTERVAL_DEFAULT),
+        DataChecksum.Type.NULL,
+        "");
+  }
+
+  @SuppressWarnings("deprecation")
+  @Override
+  public FsServerDefaults getServerDefaults(Path p) throws IOException {
+    return getServerDefaults();
+  }
+
+  @Override
+  public FsStatus getStatus(Path p) throws IOException {
+    // p 为 null 时按基类约定取默认分区（CephFS 单一分区，用根即可，
+    // 且根必然存在；workingDir 可能尚未创建，不能用 makeAbsolute(null)）
+    Path abs = (p == null) ? new Path("/") : makeAbsolute(p);
+    CephStatVFS stat;
+    try {
+      stat = proto.statfs(abs);
+    } catch (IOException e) {
+      throw mapCephException(e, abs);
+    }
+    // statvfs 语义：blocks/bavail 以 frsize 为单位（frsize 异常时回退 bsize）
+    long unit = stat.frsize > 0 ? stat.frsize : Math.max(stat.bsize, 1);
+    long capacity = stat.blocks * unit;
+    long remaining = stat.bavail * unit;
+    // CephStatVFS 无 bfree 字段（JNI 未透传），used 用 capacity - remaining 计算
+    return new FsStatus(capacity, capacity - remaining, remaining);
+  }
+
+  // ── 数据局部性（T05，架构文档 §3.2 BlockLocation 行） ────────────────────
+
+  /** OSD 地址解析失败时的降级 hosts（不让作业提交失败，任务书 T05）。 */
+  private static final String[] LOCALHOST_HOSTS = { "localhost" };
+
+  @Override
+  public BlockLocation[] getFileBlockLocations(FileStatus file, long start, long len)
+      throws IOException {
+    // 入参契约与基类 FileSystem#getFileBlockLocations 一致
+    if (file == null) {
+      return null;
+    }
+    if (start < 0 || len < 0) {
+      throw new IllegalArgumentException("Invalid start or len parameter");
+    }
+    if (file.isDirectory() || file.getLen() <= start) {
+      return new BlockLocation[0];
+    }
+
+    Path abs = makeAbsolute(file.getPath());
+    long fileLen = file.getLen();
+    // 末端钳制到文件长度；len 可能为 Long.MAX_VALUE，先比差值避免溢出
+    long end = (len > fileLen - start) ? fileLen : start + len;
+    // getFileExtent 失败时的降级步长：按文件 blockSize（无效时取默认）
+    long fallbackStep = file.getBlockSize() > 0 ? file.getBlockSize() : getDefaultBlockSize();
+
+    int fd;
+    try {
+      fd = proto.open(abs, CephMount.O_RDONLY, 0);
+    } catch (IOException e) {
+      throw mapCephException(e, abs);
+    }
+
+    List<BlockLocation> blocks = new ArrayList<>();
+    // 同一 OSD 在多个 extent 重复出现（vstart 单 OSD 时必然），调用内缓存地址
+    Map<Integer, String> osdHostCache = new HashMap<>();
+    try {
+      long cur = start;
+      while (cur < end) {
+        long blockLen;
+        String[] hosts;
+        try {
+          CephFileExtent extent = proto.getFileExtent(fd, cur);
+          long extentLen = extent.getLength();
+          if (extentLen <= 0) {
+            throw new IOException("libcephfs returned empty extent at offset "
+                + cur + ": " + extent);
+          }
+          // extent.getLength() 是从 cur 到该 extent（object）末尾的剩余字节数：
+          // start 非对齐时首块自然变短，后续块按 object 边界切分
+          blockLen = Math.min(extentLen, end - cur);
+          hosts = resolveOsdHosts(extent.getOSDs(), osdHostCache);
+        } catch (IOException e) {
+          // 单个 extent 解析失败：降级 localhost 并按 blockSize 步进，
+          // 不让作业提交失败（任务书 T05）
+          LOG.warn("Failed to resolve block location for {} at offset {}; "
+              + "falling back to localhost", abs, cur, e);
+          blockLen = Math.min(fallbackStep, end - cur);
+          hosts = LOCALHOST_HOSTS;
+        }
+        // 不做 crush 机架感知（任务书边界）：topologyPaths 留空
+        blocks.add(new BlockLocation(hosts, hosts, cur, blockLen));
+        cur += blockLen;
+      }
+    } finally {
+      try {
+        proto.close(fd);
+      } catch (IOException e) {
+        LOG.warn("Failed to close temporary fd {} for {}", fd, abs, e);
+      }
+    }
+    return blocks.toArray(new BlockLocation[0]);
+  }
+
+  /**
+   * OSD id 列表 → host 字符串数组（IP 文本，与 {@code ceph osd dump} 一致）。
+   * 任一 OSD 解析失败即抛 IOException，由调用方整段降级为 localhost。
+   */
+  private String[] resolveOsdHosts(int[] osds, Map<Integer, String> cache)
+      throws IOException {
+    if (osds == null || osds.length == 0) {
+      throw new IOException("extent has no OSDs");
+    }
+    String[] hosts = new String[osds.length];
+    for (int i = 0; i < osds.length; i++) {
+      String host = cache.get(osds[i]);
+      if (host == null) {
+        InetAddress addr = proto.getOsdAddress(osds[i]);
+        if (addr == null) {
+          throw new IOException("null address for osd." + osds[i]);
+        }
+        // 用 IP 文本（不触发反向 DNS；与 ceph osd dump 的地址直接可比）
+        host = addr.getHostAddress();
+        cache.put(osds[i], host);
+      }
+      hosts[i] = host;
+    }
+    return hosts;
   }
 
   // ── 异常映射（集中一处，任务书工作内容 4） ──────────────────────────────
