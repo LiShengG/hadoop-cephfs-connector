@@ -73,6 +73,14 @@ public final class CephConfigKeys {
   public static final String CEPH_DATA_POOLS_KEY = "ceph.data.pools";
   public static final String CEPH_DATA_POOLS_DEFAULT = null;
 
+  /**
+   * 上报的副本数（T03 增补，登记于 PROGRESS.md）。CephFS 的真实冗余由 pool
+   * 决定（架构文档 §4-4），本值仅用于 {@code getDefaultReplication} 与
+   * {@code FileStatus.getReplication} 的报告，不影响实际存储。
+   */
+  public static final String CEPH_REPLICATION_KEY = "ceph.replication";
+  public static final int CEPH_REPLICATION_DEFAULT = 3;
+
   /** 读时是否优先本地 OSD 副本。 */
   public static final String CEPH_LOCALIZE_READS_KEY = "ceph.localize.reads";
   public static final boolean CEPH_LOCALIZE_READS_DEFAULT = true;

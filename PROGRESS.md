@@ -6,7 +6,7 @@
 |---|---|---|---|
 | T01 环境验证与 Java 绑定构建 | DONE | 2026-07-05 | smoke test 全链路通过；产物见 dist/native 与本地 Maven 仓库 |
 | T02 Maven 骨架与抽象层 | DONE | 2026-07-05 | mvn test 15/15 绿色；ITestCephTalker 6/6 通过；CephFsProto 签名已冻结（见 T02 节） |
-| T03 元数据操作 | 未开始 | — | |
+| T03 元数据操作 | DONE | 2026-07-05 | mvn clean test 69/69 绿；ITestCephFileSystemMeta 5/5 通过（含 ServiceLoader 发现验证）；open/create/append 留桩待 T04 |
 | T04 数据读写流 | 未开始 | — | |
 | T05 BlockLocation 与 AbstractFileSystem | 未开始 | — | |
 | T06 契约测试与集成验证 | 未开始 | — | |
@@ -141,3 +141,76 @@
   - 本地 Maven 仓库新增 hadoop-common:3.3.6（含 test-jar）、junit 4.13.2、
     mockito-core 3.12.4、surefire/failsafe 3.0.0-M5 及传递依赖。
   - 集群未做变更（测试目录均已清理；当前仍运行中）。
+
+---
+
+## T03 CephFileSystem 元数据操作 — DONE（2026-07-05）
+
+- 验收结果：
+  1. ✅ 无集群 `mvn clean test`（`hadoop-cephfs/`，未设 CEPH_CONTRACT_TEST）：
+     `Tests run: 69, Failures: 0, Errors: 0, Skipped: 0`，BUILD SUCCESS。
+     T03 新增 mock 单测 54 例（TestCephFileSystemMeta 28 + Mutations 12 + Rename 14），
+     覆盖架构文档 §4 表 1（rename 全分支矩阵 14 例）/表 2（delete 全分支 8 例，
+     含根目录保护与后序遍历 InOrder 验证）/表 3（异常映射：FileAlreadyExists、
+     ParentNotDirectory、PathIsNotEmptyDirectory、FNF）/表 7（workingDir 相对路径
+     解析）以及表 4（setReplication→false）/表 6（uid→用户名映射）/表 8（时间戳
+     毫秒直传）。另验证无门控 `mvn verify` 时 ITest 全 skip（11 skipped）仍绿。
+  2. ✅ 集群运行中（HEALTH_WARN 单 OSD 正常告警、mds 1/1 up）执行
+     `CEPH_CONTRACT_TEST=1 mvn verify -Dit.test=ITestCephFileSystemMeta`：
+     failsafe `Tests run: 5, Failures: 0, Errors: 0, Skipped: 0`，BUILD SUCCESS
+     （真实集群 mkdirs/getFileStatus/listStatus/rename 三分支/delete 三分支/
+     workingDir/setPermission/setTimes 全走通）。
+  3. ✅ ServiceLoader 发现：ITestCephFileSystemMeta.testServiceLoaderDiscovery 中
+     `FileSystem.get(URI.create("ceph:///"), conf)`（未设 fs.ceph.impl）返回
+     CephFileSystem 实例，scheme/uri 断言通过。
+  4. ✅ 数据流方法 open/create/append 为显式留桩（仅抛
+     UnsupportedOperationException，无半成品逻辑），单测
+     testDataMethodsAreExplicitStubs 钉死。
+- 交付物清单：
+  - `hadoop-cephfs/src/main/java/org/apache/hadoop/fs/ceph/CephFileSystem.java`
+  - `hadoop-cephfs/src/main/resources/META-INF/services/org.apache.hadoop.fs.FileSystem`
+  - `hadoop-cephfs/src/main/java/org/apache/hadoop/fs/ceph/CephConfigKeys.java`
+    （增补 ceph.replication，见偏差 1）
+  - 测试：`CephFsTestHelper.java`（CephStat 反射构造/lstat mock 助手，非测试类）、
+    `TestCephFileSystemMeta.java`、`TestCephFileSystemMetaMutations.java`、
+    `TestCephFileSystemMetaRename.java`、`ITestCephFileSystemMeta.java`
+  - `docs/00-顶层架构设计.md` §5 表新增 ceph.replication 行（同步更新条目）
+- 与设计文档的偏差：
+  1. 新增配置键 `ceph.replication`（默认 3）：任务书要求 getDefaultReplication
+     "读配置，缺省 3"，但 §5 冻结表无对应键；按协作规范 §2 做最小增补
+     （CephConfigKeys 只增不改）并同步更新架构文档 §5。该值仅用于
+     FileStatus/getDefaultReplication 报告，不影响实际存储（§4-4）。
+  2. §4-6 细化：uid 与当前进程 uid（读 /proc/self/status，失败为 -1）相同→
+     ugi.shortUserName，否则数字字符串；gid 一律数字字符串（架构文档只约定
+     uid 映射，组名无法在"不做 NSS 查询"前提下取得）。
+  3. delete 根目录：!recursive → false（任务书保护条款）；recursive=true →
+     清空全部子项但保留根本身、返回 true（filesystem.md 允许的 POSIX 模型）。
+  4. rename 在 §4-1 三分支之外补充的分支（均按 HDFS/filesystem.md 惯例，
+     单测钉死）：dst 目录下同名条目已存在→false；dst 不存在且父路径缺失或为
+     文件→false；目录移入自身子树→false；src 为根→false；rename 到自身所在
+     目录（dst=src 父目录）→true no-op。
+  5. mkdirs 对入参权限应用 fs.permissions.umask-mode（默认 022），与 HDFS
+     客户端行为一致。
+- 遗留/移交事项（给 T04）：
+  - `CephFileSystem.proto` 为 private final，经包可见构造器
+    `CephFileSystem(CephFsProto)` 注入；T04 在同类内实现 open/create/append，
+    直接使用 proto 字段与私有 helper `mapCephException`（errno→Hadoop 异常，
+    集中一处，勿另起炉灶）、`makeAbsolute`（相对路径解析，所有 public 方法
+    入口必须先调用）。
+  - create 需自行完成元数据前置检查（proto 层不会代劳）：overwrite=false 且
+    目标存在→FileAlreadyExistsException；目标为目录→FileAlreadyExistsException；
+    父目录缺失→mkdirs（父为文件时 mkdirs 已会抛 ParentNotDirectoryException）。
+    blockSize 参数按 §4-5 映射到 7 参 open 的 objectSize（stripe 参数传 0 用默认），
+    data pool 取 CEPH_DATA_POOLS_KEY 第一个；O_* 常量一律 CephMount.*。
+  - getDefaultBlockSize() 已实现（读 ceph.object.size）；
+    getFileStatus 的 blockSize 用 lstat 的 st_blksize（>0 时），T04/T05 如需
+    更精确的 layout 值可换 get_file_extent/ceph_get_layout 途径再议。
+  - FileSystem.statistics（读写字节/操作计数）尚未接入，T04 在流中递增。
+  - 单测助手 `CephFsTestHelper`（反射构造 CephStat、mockLstat/mockLstatMissing、
+    newFs）可直接复用；CephStat 的 is_file/is_directory 为 native 填充的私有
+    字段，mock 场景必须经该助手构造。
+  - ITestCephFileSystemMeta 因 create 未实现，借助第二个 CephTalker mount 造
+    测试文件；T04 完成后可（可选）改用 fs.create 简化。
+  - close() 幂等由 AtomicBoolean 保证，且先 super.close()（处理 deleteOnExit）
+    再 proto.shutdown()；T04 流的 close 与 fs.close 互不代替。
+- 环境变更：无（集群未变更，测试目录均已清理；本地 Maven 仓库无新增）。
