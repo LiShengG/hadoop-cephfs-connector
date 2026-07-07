@@ -110,9 +110,10 @@ public class TestCephFileSystemIO {
         false, 4096, (short) 3, 32, null);
 
     verify(proto).mkdirs(eq(new Path("/parent")), eq(0755));
+    // blockSize=32 → 归一化为最小合法 layout 64KB（T06：stripe_unit=object_size）
     verify(proto).open(eq(file),
         eq(CephMount.O_WRONLY | CephMount.O_CREAT | CephMount.O_EXCL),
-        eq(0644), eq(32), eq(1), eq(32), eq(null));
+        eq(0644), eq(65536), eq(1), eq(65536), eq(null));
     out.close();
   }
 
@@ -134,7 +135,7 @@ public class TestCephFileSystemIO {
 
       verify(proto).open(eq(file),
           eq(CephMount.O_WRONLY | CephMount.O_CREAT | CephMount.O_EXCL),
-          anyInt(), eq(64), eq(1), eq(128), eq("poolA"));
+          anyInt(), eq(65536), eq(1), eq(65536), eq("poolA"));
       out.close();
     } finally {
       poolFs.close();
@@ -174,7 +175,7 @@ public class TestCephFileSystemIO {
 
     verify(proto).open(eq(new Path("/f")),
         eq(CephMount.O_WRONLY | CephMount.O_CREAT | CephMount.O_TRUNC),
-        anyInt(), eq(64), eq(1), eq(64), eq(null));
+        anyInt(), eq(65536), eq(1), eq(65536), eq(null));
     assertEquals(0, out.getPos());
     out.close();
   }
@@ -217,6 +218,37 @@ public class TestCephFileSystemIO {
         anyInt(), anyInt(), any());
   }
 
+  /**
+   * T06：EnumSet&lt;CreateFlag&gt; 版 createNonRecursive（建造器 createFile 路径）
+   * 不再落到基类的 "createNonRecursive unsupported"，且 OVERWRITE 标志位
+   * 正确映射为 O_TRUNC / O_EXCL。
+   */
+  @Test
+  public void testCreateNonRecursiveFlagsOverload() throws Exception {
+    Path file = new Path("/f");
+    mockLstatMissing(proto, file);
+    when(proto.open(eq(file), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), any()))
+        .thenReturn(15);
+
+    // 无 OVERWRITE → O_EXCL
+    fs.createNonRecursive(file, FsPermission.getFileDefault(),
+        java.util.EnumSet.of(org.apache.hadoop.fs.CreateFlag.CREATE),
+        4096, (short) 3, 65536, null).close();
+    verify(proto).open(eq(file),
+        eq(CephMount.O_WRONLY | CephMount.O_CREAT | CephMount.O_EXCL),
+        anyInt(), eq(65536), eq(1), eq(65536), eq(null));
+
+    // 文件已存在 + OVERWRITE → O_TRUNC
+    mockLstat(proto, file, fileStat());
+    fs.createNonRecursive(file, FsPermission.getFileDefault(),
+        java.util.EnumSet.of(org.apache.hadoop.fs.CreateFlag.CREATE,
+            org.apache.hadoop.fs.CreateFlag.OVERWRITE),
+        4096, (short) 3, 65536, null).close();
+    verify(proto).open(eq(file),
+        eq(CephMount.O_WRONLY | CephMount.O_CREAT | CephMount.O_TRUNC),
+        anyInt(), eq(65536), eq(1), eq(65536), eq(null));
+  }
+
   @Test
   public void testAppendExistingFileStartsAtFileLength() throws Exception {
     CephStat stat = fileStat();
@@ -248,5 +280,24 @@ public class TestCephFileSystemIO {
 
     assertThrows(FileNotFoundException.class, () -> fs.append(new Path("/d"), 4096, null));
     verify(proto, never()).open(any(Path.class), anyInt(), anyInt());
+  }
+
+  /**
+   * T06：blockSize → layout 归一化（file_layout_t::is_valid 约束）。
+   * 任意正数 blockSize 都必须产出合法 layout（64KB 整数倍），
+   * 已是整数倍的保持不变（含 T04 观察项中的非 2 幂 100MB）。
+   */
+  @Test
+  public void testNormalizeLayoutSize() {
+    assertEquals(65536, CephFileSystem.normalizeLayoutSize(1));
+    assertEquals(65536, CephFileSystem.normalizeLayoutSize(1024));
+    assertEquals(65536, CephFileSystem.normalizeLayoutSize(65536));
+    assertEquals(131072, CephFileSystem.normalizeLayoutSize(65537));
+    assertEquals(64L * 1024 * 1024, CephFileSystem.normalizeLayoutSize(64L * 1024 * 1024));
+    // 100MB 非 2 幂但为 64KB 整数倍 → 原样放行（T04 观察项定稿口径）
+    assertEquals(100L * 1024 * 1024, CephFileSystem.normalizeLayoutSize(100L * 1024 * 1024));
+    // 超过 int 上界 → 钳制到最大 64KB 整数倍
+    assertEquals(CephFileSystem.CEPH_MAX_LAYOUT_SIZE,
+        CephFileSystem.normalizeLayoutSize(Long.MAX_VALUE));
   }
 }

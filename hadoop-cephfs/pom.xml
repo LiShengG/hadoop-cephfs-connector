@@ -59,6 +59,14 @@
       <type>test-jar</type>
       <scope>test</scope>
     </dependency>
+    <!-- 契约测试基类（AbstractContractRootDirectoryTest 等）编译期依赖 assertj；
+         版本与 hadoop-3.3.6 hadoop-project 对齐（T06 增补） -->
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <version>3.12.2</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
@@ -95,6 +103,12 @@
           <environmentVariables>
             <LD_LIBRARY_PATH>${ceph.lib.dir}</LD_LIBRARY_PATH>
             <CEPH_CONTRACT_TEST>${env.CEPH_CONTRACT_TEST}</CEPH_CONTRACT_TEST>
+            <!-- vstart 调试构建的 ceph.conf 含 lockdep=true（Ceph 开发者调试器），
+                 mount 引导期会在 libceph-common 内部（AsyncMessenger/MonClient）
+                 偶发误报锁环并 ceph_abort 拉崩测试 JVM（T06 实测，栈完全在
+                 Ceph 内部，与连接器无关；生产构建默认关闭）。经 CEPH_ARGS
+                 仅对测试客户端进程覆盖关闭，集群守护进程不受影响。 -->
+            <CEPH_ARGS>--lockdep=false</CEPH_ARGS>
           </environmentVariables>
         </configuration>
         <executions>

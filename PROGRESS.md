@@ -9,7 +9,7 @@
 | T03 元数据操作 | DONE | 2026-07-05 | mvn clean test 69/69 绿；ITestCephFileSystemMeta 5/5 通过（含 ServiceLoader 发现验证）；open/create/append 留桩待 T04 |
 | T04 数据读写流 | DONE | 2026-07-05 | mvn clean test 95/95 绿；ITestCephIO 3/3 通过（200MB md5/pread/append/hflush/fd 计数） |
 | T05 BlockLocation 与 AbstractFileSystem | DONE | 2026-07-05 | mvn clean test 120/120 绿；ITestCephBlockLocation 4/4、ITestCephFileContext 4/4 通过；host 与 ceph osd dump 一致 |
-| T06 契约测试与集成验证 | 未开始 | — | |
+| T06 契约测试与集成验证 | DONE | 2026-07-07 | 契约 116/116 通过（仅 1 例按根目录保护口径 override）；e2e-cli-test.sh 退出码 0（200MB md5 往返一致）；并发冒烟通过；无集群 mvn clean test 122/122 绿 |
 | T07 打包部署与文档 | 未开始 | — | |
 
 ---
@@ -364,3 +364,119 @@
   - CLI `hadoop fs -stat` / `df` 走 getStatus，已可用；`getContentSummary`
     为基类默认实现（Java 侧递归），超大目录树性能一般，暂无优化必要。
 - 环境变更：无（集成测试目录均已清理；vstart 集群未调整，仍运行中）。
+
+---
+
+## T06 契约测试与集成验证 — DONE（2026-07-07）
+
+> 注：本任务由两个 agent 接力完成（前一个 agent 中途被终止，已完成契约声明/
+> 测试类骨架与部分语义修复；接续 agent 盘点半成品后续作收口，未从零重做）。
+
+- 验收结果：
+  1. ✅ `CEPH_CONTRACT_TEST=1 mvn verify -Dit.test='ITestCephContract*'`：
+     failsafe `Tests run: 116, Failures: 0, Errors: 0, Skipped: 0`，BUILD SUCCESS。
+     排除/override 仅 1 例（远小于 ≤5 类上限），书面理由见下表与代码注释。
+     另全量门控 `CEPH_CONTRACT_TEST=1 mvn verify`（T02–T05 的 23 例 + T06 并发 1 例 +
+     契约 116 例 = 140 例）连续 3 轮全绿（`Tests run: 140, Failures: 0, Errors: 0,
+     Skipped: 0`），T02–T05 行为无回归。
+  2. ✅ `scripts/e2e-cli-test.sh` 退出码 0：mkdir -p / test / put(200MB+小文件+
+     已存在失败) / ls(含长度断言) / stat / df / cat / get / cp / mv / rm -r /
+     负向 rm 共 21 项逐条断言退出码全 PASS；200MB put/get md5 往返一致。
+  3. ✅ 并发冒烟 `CEPH_CONTRACT_TEST=1 mvn verify -Dit.test=ITestCephConcurrentIO`：
+     1/1 通过（4 线程共享同一 CephFileSystem/mount，各写读 8MB 独立文件，
+     顺序 md5 + 随机 pread 比对一致，300s 超时兜底无死锁，结束后 fd 计数归零）。
+  4. ✅ 无集群 `mvn clean test`：`Tests run: 122, Failures: 0, Errors: 0, Skipped: 0`，
+     BUILD SUCCESS（T05 基线 120 + 本任务新增 testNormalizeLayoutSize、
+     testCreateNonRecursiveFlagsOverload）。无门控 `mvn clean verify`：
+     failsafe `Tests run: 140, Skipped: 140` 全部正确 skip，BUILD SUCCESS。
+
+- 契约测试结果汇总表（`CEPH_CONTRACT_TEST=1`，vstart 真实集群）：
+
+  | 套件 | 用例数 | 结果 | 排除/override 及理由 |
+  |---|---|---|---|
+  | ITestCephContractRootDirectory | 9 | 通过 | 1 例 override：`testRmNonEmptyRootDirNonRecursive` —— 基类期望非空根 `delete("/", false)` 抛 IOException；本实现按 T03 已验收的根目录保护条款一律返回 false 且不触碰数据（filesystem.md 允许对根特殊处理）。override 改为断言既定语义：返回 false、根仍在、数据不丢。按协作规范不为契约测试改动已验收行为 |
+  | ITestCephContractMkdir | 8 | 通过 | 无 |
+  | ITestCephContractCreate | 16 | 通过 | 无 |
+  | ITestCephContractAppend | 8 | 通过 | 无 |
+  | ITestCephContractDelete | 8 | 通过 | 无 |
+  | ITestCephContractSeek | 18 | 通过 | 无 |
+  | ITestCephContractRename | 10 | 通过 | 无 |
+  | ITestCephContractOpen | 19 | 通过 | 无 |
+  | ITestCephContractGetFileStatus | 20 | 通过 | 无 |
+  | 合计 | 116 | 116 通过 / 0 失败 / 0 skip | 仅上述 1 例 override |
+
+  语义均由 `src/test/resources/contract/ceph.xml` 逐项声明（每项附实测依据注释）：
+  strict-exceptions、unix-permissions、rename 全套（overwrites-dest=false、
+  returns-false-if-source-missing/dest-exists=true、creates-dest-dirs=false、
+  atomic-rename=true）、atomic-directory-delete=false、supports-append/seek/
+  positioned-readable/hflush/hsync=true、rejects-seek-past-eof=true、
+  supports-concat=false、create-overwrites-directory=false、
+  create-file-under-file-allowed=false、supports-block-locality=true、
+  root-tests-enabled=true（vstart 数据可丢弃）。
+
+- 契约暴露并修复的语义缺口（修复以满足契约为限，全部有 mock 单测或契约用例钉死）：
+  1. **createNonRecursive 的 `EnumSet<CreateFlag>` 重载缺失**：FileSystem 基类该
+     重载默认抛 "createNonRecursive unsupported"，而 `createFile(path)` 建造器
+     （契约 Create/Open 套件、HBase WAL 等下游）走的正是它，致 6 例 ERROR。
+     补 override 映射 OVERWRITE→overwrite 委托 createInternal（与 RawLocalFileSystem
+     同法）；新增单测 testCreateNonRecursiveFlagsOverload 钉死 O_EXCL/O_TRUNC 分支。
+  2. **祖先为普通文件的路径解析归一化**（新增私有 helper `lstatResolved`）：
+     CephFS 客户端对经过普通文件的路径 lstat 返回 EACCES（文件无 x 位，JNI 表现为
+     裸 IOException("Permission denied")）或 ENOTDIR，契约要求 Hadoop 语义。
+     归一化口径：变更语境（mkdirs/create）→ ParentNotDirectoryException；查询语境
+     （getFileStatus/open/append/delete/rename）→ FileNotFoundException（delete/
+     rename 入口继而按既有分支返回 false）。真正的目录权限不足不受影响
+     （祖先探测判定为目录时原样抛出）。
+  3. **blockSize → Ceph layout 归一化**（T04/T05 观察项定稿，见下"与设计文档的偏差"）。
+  4. **hasPathCapability 能力声明**：契约 Append 套件要求
+     `fs.capability.paths.append` 声明；补 override 声明 FS_APPEND 与
+     FS_PERMISSIONS（均为 CephFS 原生支持、T03/T04 实测），其余沿用基类默认 false。
+
+- 与设计文档的偏差：
+  1. **§4-5 blockSize→layout 映射口径变更（唯一一处改动 T04 已验收行为）**：
+     原口径 objectSize=blockSize、stripe_unit=min(blockSize, ceph.object.size)，
+     任意 blockSize 直传 Ceph，非 64KB 整数倍即 EINVAL（T04 独立验收观察项）。
+     契约测试的 writeDataset 会传 1024 等任意 blockSize，直接击中该缺口。
+     定稿口径：按 "blockSize 是提示值" 的 Hadoop 惯例向上归一化 ——
+     objectSize=stripe_unit=roundUp(blockSize, 64KB)（Ceph file_layout_t::is_valid
+     的 CEPH_MIN_STRIPE_UNIT 约束），stripe_count=1，并钳制到 int 可表示的最大
+     64KB 整数倍。影响面：仅 create/createNonRecursive 下发 layout 的取值；
+     64KB 整数倍的 blockSize（含默认 64MB、非 2 幂的 100MB）行为不变；
+     mock 单测（testNormalizeLayoutSize 等）与真实集群契约用例
+     （AbstractContractCreateTest 以 blockSize=1024 创建，实测通过）双重钉死。
+     T02 冻结接口未动。
+  2. **CLI 端到端未用 Hadoop 发行版**：磁盘无 Hadoop 3.3.6 可执行发行版
+     （hadoop-dist 未构建、无 tarball），按任务书"最省事可行"条款采用
+     `java org.apache.hadoop.fs.FsShell` 直跑（`hadoop fs` 包装脚本最终 exec 的
+     就是它），classpath 由 `mvn dependency:build-classpath` 从本地仓库解析
+     hadoop-common:3.3.6 全部传递依赖组装，另生成最小 core-site.xml
+     （FsShell quietMode=false 要求 classpath 上真实存在）。与发行版的差异仅
+     classpath 来源，命令解析/FS 调用路径完全相同。脚本头注释有完整说明。
+  3. 契约测试主体绑定为 `AbstractBondedFSContract`（任务书两个选项之一），
+     门控实现：未设 CEPH_CONTRACT_TEST=1 时不注入 `fs.contract.test.fs.ceph`，
+     AbstractBondedFSContract 自动置 disabled → 全部 skip。
+
+- 遗留/移交事项（给 T07）：
+  - 部署文档的 core-site.xml 样例可直接取 `scripts/e2e-cli-test.sh` 生成的
+    `target/e2e-conf/core-site.xml` 模板（fs.defaultFS、fs.ceph.impl、
+    fs.AbstractFileSystem.ceph.impl、ceph.conf.file、ceph.auth.id 五项）。
+  - 运行时部署三件套：连接器 jar + `dist/native/libcephfs.jar` +
+    `dist/native/libcephfs_jni.so`；JVM 须同时设 `-Djava.library.path` 与
+    `LD_LIBRARY_PATH`（ENV.md §3）。发行版环境等价做法：三者入
+    `$HADOOP_HOME/share/hadoop/common/lib` + jni so 入 native lib 目录。
+  - lockdep 仅存在于调试构建的 ceph.conf（vstart -d），生产 ceph.conf 无此项，
+    部署文档无需提及；但若用户拿调试构建自测，可参考 pom 注释用
+    `CEPH_ARGS=--lockdep=false` 规避。
+  - 契约套件 + e2e-cli-test.sh 可作为 T07 打包产物的回归门禁复用。
+- 环境变更：
+  - 本地 Maven 仓库新增 assertj-core:3.12.2（契约基类编译期依赖，版本与
+    hadoop-3.3.6 hadoop-project 对齐）。未下载/安装 Hadoop 发行版（见偏差 2）。
+  - pom failsafe 与 e2e 脚本对测试客户端进程设 `CEPH_ARGS=--lockdep=false`：
+    vstart 调试构建 ceph.conf 含 lockdep=true（Ceph 开发者锁序调试器），
+    mount 引导期偶发在 libceph-common 内部（AsyncMessenger::shutdown_connections
+    ← MonClient::get_monmap_and_config）误报锁环并 ceph_abort 拉崩测试 JVM
+    （复现 3 次，崩溃栈完全在 Ceph 内部，与连接器无关）。仅影响连接器测试
+    客户端进程，集群守护进程配置未动。
+  - ITestCephContractRootDirectory 会清空 CephFS 根目录（vstart 测试集群数据
+    可丢弃，ceph.xml root-tests-enabled=true 前提）；本轮结束后根目录已为空，
+    集群仍运行中（HEALTH_WARN 单 OSD 正常告警）。

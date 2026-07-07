@@ -25,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,9 +38,13 @@ import com.ceph.fs.CephNotDirectoryException;
 import com.ceph.fs.CephStat;
 import com.ceph.fs.CephStatVFS;
 
+import static org.apache.hadoop.fs.impl.PathCapabilitiesSupport.validatePathCapabilityArgs;
+
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.BlockLocation;
 import org.apache.hadoop.fs.CommonConfigurationKeysPublic;
+import org.apache.hadoop.fs.CommonPathCapabilities;
+import org.apache.hadoop.fs.CreateFlag;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileAlreadyExistsException;
@@ -183,7 +188,8 @@ public class CephFileSystem extends FileSystem {
   public FileStatus getFileStatus(Path f) throws IOException {
     Path abs = makeAbsolute(f);
     CephStat stat = new CephStat();
-    proto.lstat(abs, stat); // 不存在 → FileNotFoundException 直接透传
+    // 不存在 → FileNotFoundException 直接透传；祖先为文件同样归一化为 FNF
+    lstatResolved(abs, stat, false);
     return toFileStatus(abs, stat);
   }
 
@@ -237,9 +243,10 @@ public class CephFileSystem extends FileSystem {
 
     // libcephfs mkdirs 在末段为已存在文件时静默成功（T02 钉死），
     // Hadoop 语义必须先 lstat 自查：已存在目录→true；已存在文件→异常。
+    // 祖先为文件 → lstatResolved 归一化为 ParentNotDirectoryException（T06）。
     CephStat stat = new CephStat();
     try {
-      proto.lstat(abs, stat);
+      lstatResolved(abs, stat, true);
       if (stat.isDir()) {
         return true;
       }
@@ -266,9 +273,9 @@ public class CephFileSystem extends FileSystem {
 
     CephStat stat = new CephStat();
     try {
-      proto.lstat(abs, stat);
+      lstatResolved(abs, stat, false);
     } catch (FileNotFoundException e) {
-      return false; // 不存在 → false（filesystem.md：delete 缺失路径为 no-op）
+      return false; // 不存在（含祖先为文件）→ false（filesystem.md：delete 缺失路径为 no-op）
     }
 
     if (!stat.isDir()) {
@@ -343,9 +350,9 @@ public class CephFileSystem extends FileSystem {
 
     CephStat srcStat = new CephStat();
     try {
-      proto.lstat(absSrc, srcStat);
+      lstatResolved(absSrc, srcStat, false);
     } catch (FileNotFoundException e) {
-      return false; // §4-1：src 不存在 → false
+      return false; // §4-1：src 不存在（含祖先为文件）→ false
     }
     if (absSrc.isRoot()) {
       return false; // 根目录不可重命名
@@ -357,7 +364,7 @@ public class CephFileSystem extends FileSystem {
     CephStat dstStat = new CephStat();
     boolean dstExists = true;
     try {
-      proto.lstat(absDst, dstStat);
+      lstatResolved(absDst, dstStat, false);
     } catch (FileNotFoundException e) {
       dstExists = false;
     }
@@ -382,7 +389,7 @@ public class CephFileSystem extends FileSystem {
       if (parent != null && !parent.isRoot()) {
         CephStat parentStat = new CephStat();
         try {
-          proto.lstat(parent, parentStat);
+          lstatResolved(parent, parentStat, false);
         } catch (FileNotFoundException e) {
           return false;
         }
@@ -537,6 +544,19 @@ public class CephFileSystem extends FileSystem {
   }
 
   @Override
+  public boolean hasPathCapability(Path path, String capability) throws IOException {
+    // T06 契约测试要求声明能力（AbstractContractAppendTest.testFileSystemDeclaresCapability）：
+    // CephFS 原生支持 append（O_APPEND）与 POSIX 权限位。其余沿用基类默认（false）。
+    switch (validatePathCapabilityArgs(makeQualified(path), capability)) {
+    case CommonPathCapabilities.FS_APPEND:
+    case CommonPathCapabilities.FS_PERMISSIONS:
+      return true;
+    default:
+      return super.hasPathCapability(path, capability);
+    }
+  }
+
+  @Override
   public FsStatus getStatus(Path p) throws IOException {
     // p 为 null 时按基类约定取默认分区（CephFS 单一分区，用根即可，
     // 且根必然存在；workingDir 可能尚未创建，不能用 makeAbsolute(null)）
@@ -658,6 +678,54 @@ public class CephFileSystem extends FileSystem {
   // ── 异常映射（集中一处，任务书工作内容 4） ──────────────────────────────
 
   /**
+   * lstat，并把"祖先为普通文件"的路径解析失败归一化（T06 契约测试暴露）。
+   *
+   * <p>CephFS 客户端（Client::inode_permission）对经过普通文件的路径解析：
+   * 文件无 x 位时返回 EACCES（POSIX 内核为 ENOTDIR，即使 uid=0 也如此），
+   * 有 x 位时返回 ENOTDIR；JNI 不透传 errno，EACCES 仅表现为裸
+   * IOException("Permission denied")。因此对 lstat 的非 FNF 失败补一次
+   * 祖先探测：若最近的已存在祖先是普通文件，则按 Hadoop 语义归一化——
+   * 变更语境（mkdirs/create）抛 {@link ParentNotDirectoryException}，
+   * 查询语境（getFileStatus/open/delete/rename）抛
+   * {@link FileNotFoundException}（该路径在 Hadoop 模型中不存在）。
+   * 真正的目录权限不足不受影响（祖先探测判定为目录时原样抛出）。
+   *
+   * @param mutating true=变更语境；false=查询语境
+   */
+  private void lstatResolved(Path abs, CephStat stat, boolean mutating)
+      throws IOException {
+    try {
+      proto.lstat(abs, stat);
+    } catch (FileNotFoundException e) {
+      throw e;
+    } catch (IOException e) {
+      if (e instanceof CephNotDirectoryException || nearestExistingAncestorIsFile(abs)) {
+        if (mutating) {
+          throw (IOException) new ParentNotDirectoryException(
+              "Ancestor path is not a directory: " + abs).initCause(e);
+        }
+        throw (FileNotFoundException) new FileNotFoundException(
+            "Path does not exist (ancestor is a file): " + abs).initCause(e);
+      }
+      throw mapCephException(e, abs);
+    }
+  }
+
+  /** 自下而上找最近的可 lstat 祖先：是普通文件则返回 true。 */
+  private boolean nearestExistingAncestorIsFile(Path p) {
+    for (Path a = p.getParent(); a != null && !a.isRoot(); a = a.getParent()) {
+      CephStat stat = new CephStat();
+      try {
+        proto.lstat(a, stat);
+      } catch (IOException e) {
+        continue; // 不存在或被更深层的文件祖先挡住，继续向上
+      }
+      return !stat.isDir();
+    }
+    return false; // 根必然是目录
+  }
+
+  /**
    * proto（libcephfs errno 语义）→ Hadoop FS 规范异常。
    *
    * <ul>
@@ -687,11 +755,7 @@ public class CephFileSystem extends FileSystem {
   public FSDataInputStream open(Path f, int bufferSize) throws IOException {
     Path abs = makeAbsolute(f);
     CephStat stat = new CephStat();
-    try {
-      proto.lstat(abs, stat);
-    } catch (IOException e) {
-      throw mapCephException(e, abs);
-    }
+    lstatResolved(abs, stat, false);
     if (stat.isDir()) {
       throw new FileNotFoundException("Cannot open directory for read: " + abs);
     }
@@ -721,16 +785,29 @@ public class CephFileSystem extends FileSystem {
     return createInternal(f, permission, overwrite, blockSize, false);
   }
 
+  /**
+   * {@link EnumSet}&lt;CreateFlag&gt; 版重载（T06）：FileSystem 基类默认抛
+   * "createNonRecursive unsupported"，而 createFile(path) 建造器（契约测试
+   * AbstractContractCreateTest 的 builder 路径）与部分下游（HBase WAL）走的
+   * 正是本重载。语义与 boolean 版一致：OVERWRITE 标志位映射 overwrite，
+   * 父目录缺失不创建（与 RawLocalFileSystem 同法）。APPEND/SYNC_BLOCK 等
+   * 其余标志不支持，交由 createInternal 的既有分支处理（APPEND 场景应走
+   * {@link #append}）。
+   */
+  @Override
+  public FSDataOutputStream createNonRecursive(Path f, FsPermission permission,
+      EnumSet<CreateFlag> flags, int bufferSize, short replication, long blockSize,
+      Progressable progress) throws IOException {
+    return createInternal(f, permission, flags.contains(CreateFlag.OVERWRITE),
+        blockSize, false);
+  }
+
   @Override
   public FSDataOutputStream append(Path f, int bufferSize, Progressable progress)
       throws IOException {
     Path abs = makeAbsolute(f);
     CephStat stat = new CephStat();
-    try {
-      proto.lstat(abs, stat);
-    } catch (IOException e) {
-      throw mapCephException(e, abs);
-    }
+    lstatResolved(abs, stat, false);
     if (stat.isDir()) {
       throw new FileNotFoundException("Cannot append to directory: " + abs);
     }
@@ -753,7 +830,8 @@ public class CephFileSystem extends FileSystem {
     boolean exists = true;
     CephStat stat = new CephStat();
     try {
-      proto.lstat(abs, stat);
+      // 祖先为文件 → ParentNotDirectoryException（file/file、file/dir/file 场景）
+      lstatResolved(abs, stat, true);
       if (stat.isDir()) {
         throw new FileAlreadyExistsException(
             "Cannot create file over directory: " + abs);
@@ -763,8 +841,6 @@ public class CephFileSystem extends FileSystem {
       }
     } catch (FileNotFoundException e) {
       exists = false;
-    } catch (IOException e) {
-      throw mapCephException(e, abs);
     }
 
     ensureCreateParent(abs, createParent);
@@ -778,10 +854,17 @@ public class CephFileSystem extends FileSystem {
       flags |= CephMount.O_EXCL;
     }
 
+    // §4-5：blockSize → CephFS layout。Ceph 要求 stripe_unit / object_size 为
+    // 64KB（CEPH_MIN_STRIPE_UNIT）的整数倍且 object_size 为 stripe_unit 的整数倍
+    // （file_layout_t::is_valid），而 Hadoop 调用方（含契约测试的 writeDataset）
+    // 会传任意正数 blockSize（如 1024）。此处按"blockSize 是提示值"的 Hadoop
+    // 惯例向上归一化为合法 layout：object_size = roundUp(blockSize, 64KB)，
+    // stripe_unit = object_size、stripe_count = 1（简单 layout），
+    // 取代 T04 原 min(blockSize, 默认) 口径 —— 消除 T04 观察项中
+    // "非 stripe_unit 整数倍 blockSize → EINVAL" 的隐晦报错（T06 定稿，见 PROGRESS.md）。
     long effectiveBlockSize = blockSize > 0 ? blockSize : getDefaultBlockSize();
-    int objectSize = layoutSize(effectiveBlockSize, "objectSize");
-    int stripeUnit = layoutSize(Math.min(effectiveBlockSize, getDefaultBlockSize()),
-        "stripeUnit");
+    int objectSize = normalizeLayoutSize(effectiveBlockSize);
+    int stripeUnit = objectSize;
     String dataPool = firstDataPool();
     int streamBufferSize = streamBufferSize();
 
@@ -804,7 +887,8 @@ public class CephFileSystem extends FileSystem {
 
     CephStat parentStat = new CephStat();
     try {
-      proto.lstat(parent, parentStat);
+      // 祖先为文件（file/dir/file 的 file/dir 段）→ ParentNotDirectoryException
+      lstatResolved(parent, parentStat, true);
       if (!parentStat.isDir()) {
         throw new ParentNotDirectoryException(
             "Parent path is not a directory: " + parent);
@@ -815,8 +899,6 @@ public class CephFileSystem extends FileSystem {
         throw new FileNotFoundException(
             "Parent directory does not exist: " + parent);
       }
-    } catch (IOException e) {
-      throw mapCephException(e, parent);
     }
 
     mkdirs(parent, FsPermission.getDirDefault());
@@ -828,11 +910,22 @@ public class CephFileSystem extends FileSystem {
     return size > 0 ? size : CephConfigKeys.CEPH_CLIENT_BUFFER_SIZE_DEFAULT;
   }
 
-  private int layoutSize(long size, String name) throws IOException {
-    if (size <= 0 || size > Integer.MAX_VALUE) {
-      throw new IOException("Invalid CephFS layout " + name + ": " + size);
-    }
-    return (int) size;
+  /** Ceph layout 尺寸约束（src/common/fs_types.cc file_layout_t::is_valid）。 */
+  static final long CEPH_MIN_STRIPE_UNIT = 64L * 1024;
+  /** int 可表示的最大 64KB 整数倍（layout 参数为 int）。 */
+  static final long CEPH_MAX_LAYOUT_SIZE =
+      Integer.MAX_VALUE - (Integer.MAX_VALUE % CEPH_MIN_STRIPE_UNIT);
+
+  /**
+   * 把调用方 blockSize 归一化为合法 Ceph layout 尺寸：
+   * 向上取整到 64KB 的整数倍，并钳制到 [64KB, CEPH_MAX_LAYOUT_SIZE]。
+   */
+  static int normalizeLayoutSize(long requested) {
+    // 先钳制再取整，避免 requested 接近 Long.MAX_VALUE 时加法溢出；
+    // CEPH_MAX_LAYOUT_SIZE 本身是 64KB 的整数倍，取整结果不会越界
+    long size = Math.min(Math.max(requested, 1), CEPH_MAX_LAYOUT_SIZE);
+    return (int) (((size + CEPH_MIN_STRIPE_UNIT - 1) / CEPH_MIN_STRIPE_UNIT)
+        * CEPH_MIN_STRIPE_UNIT);
   }
 
   private String firstDataPool() {

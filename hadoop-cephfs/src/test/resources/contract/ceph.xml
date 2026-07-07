@@ -1,0 +1,217 @@
+<?xml version="1.0"?>
+<!--
+  Licensed to the Apache Software Foundation (ASF) under one
+   or more contributor license agreements.  See the NOTICE file
+   distributed with this work for additional information
+   regarding copyright ownership.  The ASF licenses this file
+   to you under the Apache License, Version 2.0 (the
+   "License"); you may not use this file except in compliance
+   with the License.  You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+  -->
+
+<!--
+  CephFS (ceph://) 的 Hadoop FileSystem 契约声明（T06）。
+  每项取值均以实测为准，依据标注在各项注释中；语义口径见
+  架构文档 §4 与 PROGRESS.md T03/T04/T06 节。
+  -->
+<configuration>
+
+  <!-- ═══ 测试开关 ═══ -->
+
+  <!-- 允许对根目录做测试：vstart 单机测试集群，数据可丢弃。
+       注意 ITestCephContractRootDirectory 会清空 CephFS 根下所有内容。 -->
+  <property>
+    <name>fs.contract.test.root-tests-enabled</name>
+    <value>true</value>
+  </property>
+
+  <!-- 远程 FS，随机 seek 次数下调以控制时长（localfs 用 1000） -->
+  <property>
+    <name>fs.contract.test.random-seek-count</name>
+    <value>100</value>
+  </property>
+
+  <!-- ═══ 基本属性 ═══ -->
+
+  <!-- CephFS 为 POSIX 文件系统，大小写敏感，非对象存储 -->
+  <property>
+    <name>fs.contract.is-case-sensitive</name>
+    <value>true</value>
+  </property>
+
+  <property>
+    <name>fs.contract.is-blobstore</name>
+    <value>false</value>
+  </property>
+
+  <!-- 本实现按 filesystem.md 抛最严格异常类型
+       （FileAlreadyExists/ParentNotDirectory/PathIsNotEmptyDirectory/FNF/EOF），
+       mock 单测（T03/T04）逐条钉死，因此声明 strict -->
+  <property>
+    <name>fs.contract.supports-strict-exceptions</name>
+    <value>true</value>
+  </property>
+
+  <!-- POSIX 权限位由 CephFS 原生支持（chmod/lstat mode），T03 实测 -->
+  <property>
+    <name>fs.contract.supports-unix-permissions</name>
+    <value>true</value>
+  </property>
+
+  <property>
+    <name>fs.contract.supports-settimes</name>
+    <value>true</value>
+  </property>
+
+  <property>
+    <name>fs.contract.supports-getfilestatus</name>
+    <value>true</value>
+  </property>
+
+  <!-- ═══ create ═══ -->
+
+  <!-- create 前置 lstat 自查：目标为目录时无论 overwrite 一律
+       FileAlreadyExistsException（T04 验收第 3 条） -->
+  <property>
+    <name>fs.contract.create-overwrites-directory</name>
+    <value>false</value>
+  </property>
+
+  <!-- O_CREAT 立即产生 inode，创建即可见（POSIX），无延迟可见性 -->
+  <property>
+    <name>fs.contract.create-visibility-delayed</name>
+    <value>false</value>
+  </property>
+
+  <!-- 父路径为文件时 create 抛 ParentNotDirectoryException（T04），
+       不允许 file/file -->
+  <property>
+    <name>fs.contract.create-file-under-file-allowed</name>
+    <value>false</value>
+  </property>
+
+  <!-- ═══ rename（架构文档 §4-1 + T03 偏差 4） ═══ -->
+
+  <!-- dst 已存在文件 → 返回 false 且不覆盖（禁止 POSIX 静默覆盖） -->
+  <property>
+    <name>fs.contract.rename-overwrites-dest</name>
+    <value>false</value>
+  </property>
+
+  <property>
+    <name>fs.contract.rename-returns-false-if-dest-exists</name>
+    <value>true</value>
+  </property>
+
+  <!-- src 不存在 → 返回 false（不抛 FNF），T03 单测钉死 -->
+  <property>
+    <name>fs.contract.rename-returns-false-if-source-missing</name>
+    <value>true</value>
+  </property>
+
+  <!-- dst 父目录缺失 → 返回 false，不自动建目录（与 HDFS 一致） -->
+  <property>
+    <name>fs.contract.rename-creates-dest-dirs</name>
+    <value>false</value>
+  </property>
+
+  <!-- dst 为已存在目录 → 移入其下（HDFS/CLI 行为），而非 POSIX
+       "空目录被替换" 行为 -->
+  <property>
+    <name>fs.contract.rename-remove-dest-if-empty-dir</name>
+    <value>false</value>
+  </property>
+
+  <!-- rename 是单次 MDS 事务（libcephfs ceph_rename），原子 -->
+  <property>
+    <name>fs.contract.supports-atomic-rename</name>
+    <value>true</value>
+  </property>
+
+  <!-- ═══ delete ═══ -->
+
+  <!-- delete(recursive) 在 Java 侧后序遍历逐项删除（§4-2），非原子 -->
+  <property>
+    <name>fs.contract.supports-atomic-directory-delete</name>
+    <value>false</value>
+  </property>
+
+  <!-- ═══ 数据读写 ═══ -->
+
+  <!-- append = open(O_WRONLY|O_APPEND)，CephFS 原生支持（T04 实测） -->
+  <property>
+    <name>fs.contract.supports-append</name>
+    <value>true</value>
+  </property>
+
+  <!-- 不支持 concat（架构文档 §1.2 非目标；FileSystem 基类默认抛
+       UnsupportedOperationException） -->
+  <property>
+    <name>fs.contract.supports-concat</name>
+    <value>false</value>
+  </property>
+
+  <property>
+    <name>fs.contract.supports-seek</name>
+    <value>true</value>
+  </property>
+
+  <!-- CephInputStream.seek 越过 EOF 抛 EOFException（T04 单测钉死） -->
+  <property>
+    <name>fs.contract.rejects-seek-past-eof</name>
+    <value>true</value>
+  </property>
+
+  <!-- 流 close 后 seek/available 抛 IOException（T04 单测钉死） -->
+  <property>
+    <name>fs.contract.supports-seek-on-closed-file</name>
+    <value>false</value>
+  </property>
+
+  <property>
+    <name>fs.contract.supports-available-on-closed-file</name>
+    <value>false</value>
+  </property>
+
+  <!-- FSInputStream positioned read 直接以显式 offset 读 CephFS（T04） -->
+  <property>
+    <name>fs.contract.supports-positioned-readable</name>
+    <value>true</value>
+  </property>
+
+  <!-- hflush/hsync → ceph fsync；StreamCapabilities 声明 HFLUSH/HSYNC
+       （T04 实测跨实例可见） -->
+  <property>
+    <name>fs.contract.supports-hflush</name>
+    <value>true</value>
+  </property>
+
+  <property>
+    <name>fs.contract.supports-hsync</name>
+    <value>true</value>
+  </property>
+
+  <!-- fsync 后同 mount 的 lstat 立即反映新长度（客户端持有 caps，
+       ITestCephContractCreate.testSyncable 实测） -->
+  <property>
+    <name>fs.contract.metadata_updated_on_hsync</name>
+    <value>true</value>
+  </property>
+
+  <!-- ═══ 数据局部性 ═══ -->
+
+  <!-- getFileBlockLocations 返回真实 OSD 地址（T05） -->
+  <property>
+    <name>fs.contract.supports-block-locality</name>
+    <value>true</value>
+  </property>
+
+</configuration>
