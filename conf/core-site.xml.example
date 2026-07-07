@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  Hadoop CephFS 连接器 core-site.xml 配置样例（hadoop-cephfs 1.0.0）
+  ===================================================================
+
+  覆盖架构文档 §5 的全部配置键。使用方法：
+    1. 把下方「必配项」合并进 $HADOOP_CONF_DIR/core-site.xml（不要整文件替换，
+       保留你已有的其他 Hadoop 配置）；
+    2. 「可选项」按需取消注释；
+    3. 每个键给出两组示例值：
+         [vstart]  本机 vstart 开发集群（源码仓库 docs/ENV.md 环境）
+         [生产]    生产 Ceph 集群的典型值
+       样例默认填 vstart 值，部署到生产时按注释替换。
+
+  完整部署步骤（native 库、cephx 权限、故障排查）见随包 README.md 与 docs/DEPLOY.md。
+-->
+<configuration>
+
+  <!-- ═══════════════ 必配项（5 项，缺一不可） ═══════════════ -->
+
+  <!-- ceph scheme 与 FileSystem 实现类的绑定。
+       连接器 jar 内已带 ServiceLoader 声明（META-INF/services），FileSystem 路径
+       可自动发现；显式配置可避免 classpath 上多个实现时的歧义，建议保留。 -->
+  <property>
+    <name>fs.ceph.impl</name>
+    <value>org.apache.hadoop.fs.ceph.CephFileSystem</value>
+  </property>
+
+  <!-- AbstractFileSystem（FileContext 路径，YARN NodeManager 等使用）的绑定。
+       注意：AbstractFileSystem 没有 ServiceLoader 自动发现机制，
+       此项【必须显式配置】，否则 FileContext/YARN 报
+       UnsupportedFileSystemException: fs.AbstractFileSystem.ceph.impl=null -->
+  <property>
+    <name>fs.AbstractFileSystem.ceph.impl</name>
+    <value>org.apache.hadoop.fs.ceph.CephFs</value>
+  </property>
+
+  <!-- 默认文件系统。
+       [vstart] ceph:///                    （mon 地址从 ceph.conf.file 读取，推荐）
+       [生产]   ceph:///                    （同上，推荐）
+       [生产]   ceph://mon1.example.com:6789/ （URI authority 覆盖 ceph.conf 的 mon_host）
+       不想改 fs.defaultFS 时可省略本项，命令里写全 URI：hadoop fs -ls ceph:///path -->
+  <property>
+    <name>fs.defaultFS</name>
+    <value>ceph:///</value>
+  </property>
+
+  <!-- ceph.conf 路径（mon 地址、集群 fsid 等由它提供）。
+       [vstart] /home/lsh/code/ceph/build/ceph.conf
+       [生产]   /etc/ceph/ceph.conf -->
+  <property>
+    <name>ceph.conf.file</name>
+    <value>/home/lsh/code/ceph/build/ceph.conf</value>
+  </property>
+
+  <!-- cephx 用户 id（"client." 前缀之后的部分）。
+       [vstart] admin  （vstart 生成的 client.admin，keyring 在 ceph.conf 内已声明）
+       [生产]   hadoop （专用最小权限用户，创建方法见 DEPLOY.md §4） -->
+  <property>
+    <name>ceph.auth.id</name>
+    <value>admin</value>
+  </property>
+
+  <!-- ═══════════════ 可选项（按需取消注释） ═══════════════ -->
+
+  <!-- keyring 文件路径。未配置时依赖 ceph.conf 里的 keyring 项。
+       [vstart] /home/lsh/code/ceph/build/keyring （ceph.conf 已声明，无需本项）
+       [生产]   /etc/ceph/ceph.client.hadoop.keyring
+  <property>
+    <name>ceph.auth.keyring</name>
+    <value>/etc/ceph/ceph.client.hadoop.keyring</value>
+  </property>
+  -->
+
+  <!-- 分号分隔的额外 ceph 客户端配置，等效写进 ceph.conf 的 [client] 段。
+       [vstart] lockdep=false;client_mount_timeout=30
+                （vstart 调试构建的 ceph.conf 含 lockdep=true——Ceph 开发者锁序
+                  调试器，挂载引导期偶发误报并 abort 客户端 JVM；生产构建无此项）
+       [生产]   client_mount_timeout=30 （挂载超时秒数，默认 300，调小便于快速失败）
+  <property>
+    <name>ceph.conf.options</name>
+    <value>client_mount_timeout=30</value>
+  </property>
+  -->
+
+  <!-- 挂载后视为 Hadoop 文件系统根的 CephFS 子目录。默认 "/"（整个 CephFS）。
+       [生产]   /hadoop （多业务共用 CephFS 时相互隔离）
+  <property>
+    <name>ceph.root.dir</name>
+    <value>/hadoop</value>
+  </property>
+  -->
+
+  <!-- 新文件默认 object size（字节），兼作 Hadoop blockSize 报告值。
+       默认 67108864（64MB）。必须是 65536（64KB）的整数倍；create 传入的
+       非整数倍 blockSize 会被向上归一化到 64KB 边界。
+       [生产]   134217728 （128MB，与 HDFS 默认块大小对齐）
+  <property>
+    <name>ceph.object.size</name>
+    <value>67108864</value>
+  </property>
+  -->
+
+  <!-- 新文件写入的 data pool（逗号分隔，取第一个存在的）。默认用 CephFS 默认 pool。
+       [vstart] cephfs.a.data
+       [生产]   cephfs_data_ssd,cephfs_data
+       注意：cephx 授权须覆盖所选 pool（DEPLOY.md §4）。
+  <property>
+    <name>ceph.data.pools</name>
+    <value>cephfs_data</value>
+  </property>
+  -->
+
+  <!-- 上报给 Hadoop 的副本数（仅影响 FileStatus/getDefaultReplication 的报告值，
+       真实冗余由 Ceph pool 的 size/EC 配置决定）。默认 3。
+       [vstart] 1 （单 OSD、无副本 pool，报 1 更贴近实际）
+       [生产]   3 （与 pool size=3 一致）
+  <property>
+    <name>ceph.replication</name>
+    <value>3</value>
+  </property>
+  -->
+
+  <!-- 读时是否优先本地 OSD 副本（计算-存储混部时降低网络流量）。默认 true。
+  <property>
+    <name>ceph.localize.reads</name>
+    <value>true</value>
+  </property>
+  -->
+
+  <!-- 连接器流的读/写缓冲大小（字节）。默认 4194304（4MB）。
+       顺序大 IO 可调大（如 8388608）；大量小文件/低内存场景可调小。
+  <property>
+    <name>ceph.client.buffer.size</name>
+    <value>4194304</value>
+  </property>
+  -->
+
+</configuration>

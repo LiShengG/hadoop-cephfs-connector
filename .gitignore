@@ -4,3 +4,6 @@ dist/native/*.so*
 scripts/smoke/*.class
 *.class
 target/
+# T07 打包产物
+dist/hadoop-cephfs-*/
+dist/*.tar.gz

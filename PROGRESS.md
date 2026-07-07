@@ -10,7 +10,7 @@
 | T04 数据读写流 | DONE | 2026-07-05 | mvn clean test 95/95 绿；ITestCephIO 3/3 通过（200MB md5/pread/append/hflush/fd 计数） |
 | T05 BlockLocation 与 AbstractFileSystem | DONE | 2026-07-05 | mvn clean test 120/120 绿；ITestCephBlockLocation 4/4、ITestCephFileContext 4/4 通过；host 与 ceph osd dump 一致 |
 | T06 契约测试与集成验证 | DONE | 2026-07-07 | 契约 116/116 通过（仅 1 例按根目录保护口径 override）；e2e-cli-test.sh 退出码 0（200MB md5 往返一致）；并发冒烟通过；无集群 mvn clean test 122/122 绿 |
-| T07 打包部署与文档 | 未开始 | — | |
+| T07 打包部署与文档 | DONE | 2026-07-07 | make-dist.sh 一键产出 v1.0.0 tar.gz；干净 shell 按 DEPLOY.md 终验通过；打包后回归门禁 140 例 + e2e 全绿；git tag v1.0.0 |
 
 ---
 
@@ -480,3 +480,121 @@
   - ITestCephContractRootDirectory 会清空 CephFS 根目录（vstart 测试集群数据
     可丢弃，ceph.xml root-tests-enabled=true 前提）；本轮结束后根目录已为空，
     集群仍运行中（HEALTH_WARN 单 OSD 正常告警）。
+
+---
+
+## T07 打包、部署与使用文档 — DONE（2026-07-07）
+
+- 验收结果（任务书 4 条逐条）：
+  1. ✅ `scripts/make-dist.sh` 从干净 `mvn clean` 状态一键成功：先 `mvn -q clean`
+     确认 target 清空，再执行脚本，退出码 0；内部 `mvn clean package` 含全部无集群
+     单测（surefire 汇总 122/122，0 失败 0 跳过），产出
+     `dist/hadoop-cephfs-1.0.0.tar.gz`（sha256=1aa5b4e7d47d…0480d9），内容为
+     `hadoop-cephfs-1.0.0/{hadoop-cephfs-1.0.0.jar, libcephfs.jar, libcephfs_jni.so,
+     conf/core-site.xml.example, README.md, docs/DEPLOY.md}`。
+     libcephfs.jar 不合入（shade）连接器 jar、并列发布，理由（脚本头注释与
+     DEPLOY.md §2.1）：LGPL-2.1/Apache-2.0 许可隔离；jar 与 jni so 同源成对、
+     须随 Ceph 客户端整体升级；避免与节点已有 libcephfs.jar 类冲突。
+  2. ✅ 终验（干净 shell、只按文档操作）全部命令成功：`scripts/t07-final-verify.sh`
+     以 `env -i bash --noprofile --norc`（环境仅 HOME/PATH/PWD 等 6 项，不继承会话
+     env）从 tar.gz 出发，仅按 DEPLOY.md §2.1/§3/§2.3-A/§5.2 操作，
+     ls/put/cat/rm ceph:/// 全流程通过，退出码 0。命令与输出记录见下。
+  3. ✅ DEPLOY.md 中每条命令均实测有效：验证序列（§5.2）即终验所跑；cephx 授权
+     命令（§4 `ceph fs authorize a client.hadoop / rwp`、`ceph auth get`）在 vstart
+     实测并贴实测 caps 输出；排查表症状文本全部为本轮真实复现的原文（见 4）；
+     `ldd` 自检、`CEPH_JNI_PATH`、`ceph.conf.options=lockdep=false` 均实测。
+     无 Hadoop 发行版，`hadoop fs` 以 `java org.apache.hadoop.fs.FsShell` 等效实测
+     （与 T06 CLI 方案一致，DEPLOY.md 开头有书面口径说明）。
+  4. ✅ 排查表覆盖 6 类，全部真实复现（2026-07-07，复现方法与原文记录）：
+     ① UnsatisfiedLinkError（`java.library.path` 指空目录复现；实测症状为加载器
+       fallback 后的 `Can't load library: /usr/lib/jni/libcephfs_jni.so`，比 ENV.md §3
+       记录的教科书文本更真实——CephNativeLoader 会吞掉首次失败）；同症状第二根因
+       （依赖 so 缺失）用二进制等长改写 RUNPATH 的 so 副本复现，`ldd` 显示
+       `libcephfs.so.2 => not found`；
+     ② mount 超时：fs.defaultFS 指向不可达 mon `ceph://192.0.2.1:6789/`，
+       约 50s 后 `ls: Connection timed out`（rc=1）；
+     ③ 认证失败：`ceph.auth.id=nosuch`（不存在的用户）→ 挂载期 `ls: Permission denied`；
+     ④ mds caps 缺 `p` 位：`ceph fs authorize a client.hadoop / rw` 用户
+       `-mkdir` 成功但 `-put` 报 `put: Permission denied`（原因：连接器 create 恒以
+       7 参 layout open 下发 object size，MDS 要求 `p`＝set layout 能力；改授
+       `/ rwp` 后同一操作序列 put/cat/rm 全通过，已实测钉死）；
+     ⑤ 连接器 jar 不在 classpath：`-ls: Fatal internal error` +
+       `ClassNotFoundException: Class org.apache.hadoop.fs.ceph.CephFileSystem not found`；
+     ⑥ `fs.AbstractFileSystem.ceph.impl` 未配 → `UnsupportedFileSystemException`
+       （T05 ITestCephFileContext 负向用例实测）。另附调试构建集群 lockdep 误报条目
+       （T06 复现 3 次；本轮实测 `ceph.conf.options=lockdep=false` 配置法有效）。
+
+- 打包后回归门禁（T06 交接的门禁复用，均在 make-dist 产物构建后执行）：
+  - `CEPH_CONTRACT_TEST=1 mvn verify`：failsafe 汇总 `Tests run: 140, Failures: 0,
+    Errors: 0, Skipped: 0`，BUILD SUCCESS（契约 116 + 集成 24）；
+  - `scripts/e2e-cli-test.sh`：退出码 0，21 项断言全 PASS，200MB md5 往返一致。
+
+- 终验命令与输出记录（`scripts/t07-final-verify.sh` 实录，SLF4J/log4j 噪音行略）：
+
+  ```
+  == 干净 shell 环境（env 全量）==
+  HOME=/root  PATH=/usr/local/sbin:...:/bin  PROJ_ROOT=...  PWD=...  SHLVL=0  TARBALL=.../dist/hadoop-cephfs-1.0.0.tar.gz
+  == DEPLOY.md §2.1 解包 ==            # tar xzf dist/hadoop-cephfs-1.0.0.tar.gz
+  hadoop-cephfs-1.0.0.jar / libcephfs.jar / libcephfs_jni.so / conf/ / docs/ / README.md
+  == DEPLOY.md §3 core-site.xml ==     # 5 必配项(vstart 值) + lockdep=false(§6 调试构建条目)
+  == DEPLOY.md §5.2-1 组装 classpath == # mvn dependency:build-classpath → 108 条目
+  == DEPLOY.md §2.3-A + §5.2-3 ==      # export LD_LIBRARY_PATH=/home/lsh/code/ceph/build/lib
+                                       # hfs = java -cp conf:连接器:libcephfs.jar:$(cat cp.txt)
+                                       #       -Djava.library.path=<解包目录> o.a.h.fs.FsShell
+  $ hadoop fs -mkdir -p ceph:///verify/dir                                  rc=0
+  $ hadoop fs -ls ceph:///verify
+  Found 1 items
+  drwxr-xr-x   - root 0          0 2026-07-07 13:40 ceph:///verify/dir      rc=0
+  $ hadoop fs -put /tmp/t07-deploy.BrB5sp/hello.txt ceph:///verify/dir/hello.txt   rc=0
+  $ hadoop fs -ls ceph:///verify/dir
+  -rw-r--r--   3 root 0         13 2026-07-07 13:40 ceph:///verify/dir/hello.txt  rc=0
+  $ hadoop fs -cat ceph:///verify/dir/hello.txt
+  hello cephfs                                                              rc=0
+  $ hadoop fs -rm -r ceph:///verify
+  Deleted ceph:///verify                                                    rc=0
+  $ hadoop fs -test -e ceph:///verify（应 rc=1）                            rc=1
+  [t07-final-verify] PASS: 干净 shell 按 DEPLOY.md 完成 ls/put/cat/rm 全流程
+  ```
+
+- 交付物清单：
+  - `dist/hadoop-cephfs-1.0.0.tar.gz`（git 忽略二进制，磁盘上存在；
+    `scripts/make-dist.sh` 可随时复现，sha256 见脚本输出）
+  - `scripts/make-dist.sh`、`scripts/t07-final-verify.sh`
+  - `conf/core-site.xml.example`（架构文档 §5 全部 13 键注释版，vstart/生产两组示例值）
+  - `docs/DEPLOY.md`（前提、安装、native 三种配置方式、配置讲解、cephx、验证、
+    6 类排查表、已知限制）、`docs/DEVELOP.md`（构建、三级测试、打包、回归门禁）
+  - `hadoop-cephfs/pom.xml`（版本 0.1.0-SNAPSHOT → 1.0.0）
+  - 更新的根 `README.md`（状态 + 快速上手）、`.gitignore`（忽略打包产物）
+  - git tag `v1.0.0`
+- 与设计文档的偏差：
+  1. 任务书 §3 写 cephx 需 "mds rw"，实测不足：连接器 create 恒下发 file layout
+     （7 参 open），MDS 要求 `p` 能力位；DEPLOY.md 按实测写 **mds rwp** 并在 §4
+     显著标注（复现与验证记录见验收 4-④）。代码未改（见遗留 1）。
+  2. ENV.md §3 的两条报错文本源自直接 System.loadLibrary 场景；经 libcephfs.jar 的
+     CephNativeLoader（带 /usr/lib64、/usr/lib/jni fallback）实际症状统一为
+     `UnsatisfiedLinkError: Can't load library: /usr/lib/jni/libcephfs_jni.so`。
+     DEPLOY.md 排查表按实测原文写，并给出用加载日志与 `ldd` 区分两种根因的方法。
+  3. pom 版本升至 1.0.0 属任务书明确要求（产出 hadoop-cephfs-1.0.0.jar），
+     非接口变更；scripts/e2e-cli-test.sh 以通配符匹配 jar，无需改动。
+- 遗留/移交事项（项目级汇总，供人工后续决策）：
+  1. **mds `p` 能力位需求可优化**：create 在用户未显式配置 blockSize/ceph.object.size
+     偏好时也走 7 参 layout open。后续可改为"默认 layout 时用 3 参 open"，将最小
+     mds caps 降回 `rw`（涉及 T04 已验收路径，本任务按边界只登记不实现）。
+  2. 发布包内 `libcephfs_jni.so` 为本机 Ceph 调试构建产物（带指向
+     `/home/lsh/code/ceph/build/lib` 的 RUNPATH，无害但非纯净）；正式对外发布建议
+     用生产构建重编该 so（方法同 ENV.md §2），或指引用户改用发行版 libcephfs2
+     自带的 jni 库（DEPLOY.md §1 已写获取方式）。
+  3. 二进制产物（dist/native/*、tar.gz）均不入 git；正式发布渠道（制品库/Release
+     附件）与签名流程需人工决策（任务书禁止发布到外部仓库）。
+  4. 终验以 FsShell 等效方式完成（机器无 Hadoop 发行版，T06 既定口径）；如需
+     用发行版 `bin/hadoop` 包装脚本再验一遍，装好发行版后按 DEPLOY.md §5.1 直接执行。
+  5. 功能性遗留（历次登记汇总）：BlockLocation 无机架拓扑（topologyPaths 空）；
+     getContentSummary 为基类 Java 侧递归，超大目录树性能一般；XAttr/ACL/快照/
+     Kerberos/多 fs 为架构 §1.2 非目标，未实现；AbstractFileSystem（CephFs）无
+     close 钩子，mount 生命周期同 JVM（T05 登记）。
+- 环境变更：
+  - 为验证 DEPLOY.md §4/排查表临时创建 cephx 用户 client.hadoop（rw→复现④）、
+    client.hadoop2（rwp→验证修复）、client.viewer（只读），验证后已全部
+    `ceph auth del` 删除；集群中测试路径（/t07-cephx、/verify、/e2e-cli-*）均已清理，
+    根目录为空，集群仍运行中（HEALTH_WARN 单 OSD 正常告警）。
+  - 本地 Maven 仓库无新增依赖。
