@@ -38,10 +38,13 @@ scripts/make-dist.sh                         # 一键打部署包
 |---|---|---|
 | [docs/DEPLOY.md](docs/DEPLOY.md) | 部署：安装、配置、cephx 权限、验证、故障排查表 | 部署者/用户 |
 | [docs/DEVELOP.md](docs/DEVELOP.md) | 开发：构建、三级测试、打包、回归门禁 | 开发者 |
+| [docs/TEST-PLAN.md](docs/TEST-PLAN.md) | **生产级测试方案**：缺口盘点、环境矩阵、L0–L7 层级、验收阈值、CI 门禁、排期 | 测试/开发/SRE |
+| [docs/TEST-CASES.md](docs/TEST-CASES.md) | 生产级用例清单（147 例，ID/优先级/判定标准） | 测试/开发 |
 | [docs/ENV.md](docs/ENV.md) | 本机开发环境事实（集群、JNI 产物、路径） | 开发者 |
 | [docs/00-顶层架构设计.md](docs/00-顶层架构设计.md) | 总体架构、分层设计、语义映射、配置项、风险清单 | 所有 agent 必读 |
 | [docs/01-协作规范.md](docs/01-协作规范.md) | 多 agent 协作流程、接口冻结规则、进度登记 | 所有 agent 必读 |
 | [docs/tasks/T01-*.md](docs/tasks/) ~ T07 | 各阶段子任务书，每份对应一个 agent 会话 | 对应 agent |
+| [docs/tasks/T08-*.md](docs/tasks/) ~ T12 | 生产就绪测试阶段任务书（测试基础设施 / 故障注入 / 性能 / 生态兼容 / 长稳验收） | 对应 agent |
 | [PROGRESS.md](PROGRESS.md) | 任务进度与交接记录（含各任务验收输出） | 所有 agent |
 
 ## 任务总览与依赖关系（全部 DONE）
@@ -54,6 +57,16 @@ T01 环境验证与 libcephfs Java 绑定构建            DONE 2026-07-05
                 └─> T05 BlockLocation 与 AbstractFileSystem  DONE 2026-07-05
                      └─> T06 契约测试与 vstart 集成验证       DONE 2026-07-07
                           └─> T07 打包、部署与使用文档        DONE 2026-07-07 (v1.0.0)
+```
+
+## 生产就绪阶段（v1.1.0，方案见 docs/TEST-PLAN.md）
+
+```
+T08 测试基础设施与质量门禁（E2/E3 环境、CI、L0 门禁、官方契约套件扩展）  PLANNED
+ ├─> T09 功能深化与故障注入（L3 + 15 类故障场景）                        PLANNED
+ ├─> T10 性能与容量基准（对照内核 mount 建立基线）                       PLANNED
+ ├─> T11 生态集成与兼容矩阵（MR/YARN/Spark/Hive/DistCp + 四维矩阵）      PLANNED
+ └─> T12 安全、长稳与发布验收（安全模型澄清 + 72h 长稳 + 生产就绪报告）   PLANNED
 ```
 
 ## 关键环境事实（开发机）
