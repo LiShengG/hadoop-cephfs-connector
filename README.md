@@ -39,7 +39,8 @@ scripts/make-dist.sh                         # 一键打部署包
 | [docs/DEPLOY.md](docs/DEPLOY.md) | 部署：安装、配置、cephx 权限、验证、故障排查表 | 部署者/用户 |
 | [docs/DEVELOP.md](docs/DEVELOP.md) | 开发：构建、三级测试、打包、回归门禁 | 开发者 |
 | [docs/TEST-PLAN.md](docs/TEST-PLAN.md) | **生产级测试方案**：缺口盘点、环境矩阵、L0–L7 层级、验收阈值、CI 门禁、排期 | 测试/开发/SRE |
-| [docs/TEST-CASES.md](docs/TEST-CASES.md) | 生产级用例清单（147 例，ID/优先级/判定标准） | 测试/开发 |
+| [docs/TEST-CASES.md](docs/TEST-CASES.md) | 生产级用例清单（147 例骨架，ID/优先级/判定标准） | 测试/开发 |
+| [docs/TEST-CASES-ECO.md](docs/TEST-CASES-ECO.md) | **Hadoop 生态组件使用场景测试设计**（88 场景 + 8 前置 spike + API 支撑面盘点） | 测试/开发/使用方 |
 | [docs/ENV.md](docs/ENV.md) | 本机开发环境事实（集群、JNI 产物、路径） | 开发者 |
 | [docs/00-顶层架构设计.md](docs/00-顶层架构设计.md) | 总体架构、分层设计、语义映射、配置项、风险清单 | 所有 agent 必读 |
 | [docs/01-协作规范.md](docs/01-协作规范.md) | 多 agent 协作流程、接口冻结规则、进度登记 | 所有 agent 必读 |
@@ -62,12 +63,18 @@ T01 环境验证与 libcephfs Java 绑定构建            DONE 2026-07-05
 ## 生产就绪阶段（v1.1.0，方案见 docs/TEST-PLAN.md）
 
 ```
+SPIKE 8 条高风险预测的证伪（3–5 天，最先执行，见 TEST-CASES-ECO.md §3）      PLANNED
+ │
 T08 测试基础设施与质量门禁（E2/E3 环境、CI、L0 门禁、官方契约套件扩展）  PLANNED
  ├─> T09 功能深化与故障注入（L3 + 15 类故障场景）                        PLANNED
  ├─> T10 性能与容量基准（对照内核 mount 建立基线）                       PLANNED
- ├─> T11 生态集成与兼容矩阵（MR/YARN/Spark/Hive/DistCp + 四维矩阵）      PLANNED
+ ├─> T11 生态集成与兼容矩阵（88 组件场景 + 四维矩阵 → 组件支持矩阵）     PLANNED
  └─> T12 安全、长稳与发布验收（安全模型澄清 + 72h 长稳 + 生产就绪报告）   PLANNED
 ```
+
+> 生态集成是风险最高的一段：连接器在**属主/组字符串、`access()` 鉴权、`setOwner`、
+> 写入中文件可见性、`FileContext` 语义、委托 Token** 六处存在生态组件重度依赖、
+> 而冒烟测试打不到的语义偏差。详见 [docs/TEST-CASES-ECO.md](docs/TEST-CASES-ECO.md)。
 
 ## 关键环境事实（开发机）
 

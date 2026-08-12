@@ -38,7 +38,7 @@ Hadoop 官方契约测试钉死，但**可靠性、性能、长稳、生态、�
 | G2 | **无故障与恢复证据**：连接器全链路**无重试/无重连**——`CephTalker` 直接透传 libcephfs 调用，`shutdown()` 后一律 `CephNotMountedException`；客户端被 evict/blocklist 后能否恢复未知 | `CephTalker.java` 全文无 retry 逻辑 | §6 |
 | G3 | **无性能与容量基线**：吞吐/元数据 OPS/延迟分位/资源占用全无数据，无法判断回归 | 无 perf 记录 | §7 |
 | G4 | **无长稳证据**：fd、JVM heap、**native RSS**（libcephfs objecter/缓存在 JVM 堆外）、线程、mount 数的长期趋势未测 | 仅 300s 并发冒烟 | §8 |
-| G5 | **生态集成为零**：MR/Hive/Spark/YARN/DistCp 全未验证；`hadoop fs` 亦以 `FsShell` 等效方式跑，从未用 Hadoop 发行版 | PROGRESS T06 偏差 2 / T07 遗留 4 | §11 |
+| G5 | **生态集成为零（最高风险）**：MR/YARN/Hive/Spark/HBase/DistCp 全未验证；`hadoop fs` 亦以 `FsShell` 等效方式跑，从未用 Hadoop 发行版。且连接器在**属主/组字符串、`access()`、`setOwner`、写入中文件可见性、`FileContext` 语义、委托 Token** 六处存在生态组件重度依赖、冒烟测试打不到的偏差 | PROGRESS T06 偏差 2 / T07 遗留 4；`ownerName`/`groupName`/`setOwner`/`CephInputStream`/`CephFs` | §11 + [TEST-CASES-ECO.md](TEST-CASES-ECO.md) |
 | G6 | **兼容矩阵未定义**：仅 Hadoop 3.3.6 + JDK 11 + Ceph 16.2.14 单点；libcephfs.jar 与 `libcephfs_jni.so` 的版本配对约束未做负向验证 | pom + ENV.md | §9 |
 | G7 | **多租户/安全模型未澄清**：连接器所有请求使用**同一 cephx id**，Hadoop UGI 身份不下传到 MDS；`setOwner` 只接受数字 uid/gid（非数字静默 warn 跳过）；受限 caps/子目录挂载/root_squash 未测 | `CephFileSystem#setOwner`、`CephTalker#initialize` | §10 |
 | G8 | **读可见性语义未定稿**：`CephInputStream` 在 open 时刻快照 `fileLength`，其后追加的数据对已打开的 reader 不可见（`read` 越过快照即返回 -1） | `CephInputStream` 构造器 + `read()` | §5 L3 |
@@ -66,7 +66,7 @@ Hadoop 官方契约测试钉死，但**可靠性、性能、长稳、生态、�
 | 性能回归 | 相对上一发布基线 | 下降 > 10% 阻断 |
 | 长稳 | 72h 混合负载 | 失败 0；native RSS 增长 < 5%/24h；fd 归零；线程数稳定；mount 数不增 |
 | 兼容 | 兼容矩阵单元格 | 全绿或书面豁免 |
-| 生态 | MR/Spark/Hive/YARN/DistCp 场景 | 全部通过（不支持项须书面声明并有负向用例） |
+| 生态 | 组件场景用例（TEST-CASES-ECO.md，88 条） | P0 全通过；P1 通过或书面豁免；**《组件支持矩阵》发布**；不支持项必须"明确失败 + 可读消息"，不得静默产生错误数据 |
 | 覆盖率 | `org.apache.hadoop.fs.ceph` 行/分支 | ≥ 80% / ≥ 70%；`CephFileSystem` 行 ≥ 85% |
 | 门禁效率 | PR 门禁流水线时长 | ≤ 30 min |
 | 稳定性（测试自身） | flaky 率（连续 20 轮） | < 1%，且每个 flaky 必须建单，禁止盲目 rerun |
@@ -283,16 +283,28 @@ Hadoop 2.x 兼容；`concat` / `truncate` 扩展 API。
 
 ## 11. 生态集成（L6，E3）
 
-| ID | 场景 | 关键验证点 |
+> **完整设计见 [TEST-CASES-ECO.md](TEST-CASES-ECO.md)（88 条场景用例 + 8 条前置 spike）。**
+> 该篇按"组件的真实使用姿势 → 反推依赖的 FS API → 对照连接器实现事实"的方法展开，
+> 而非每个组件跑一个 hello world。
+
+生态集成是本方案中**风险最高、最可能推翻发布结论**的一段，原因在于连接器有一批
+生态组件重度依赖、而冒烟测试打不到的语义偏差：
+
+| 偏差 | 代码事实 | 波及组件 |
 |---|---|---|
-| ECO-1 | MapReduce：wordcount / TeraSort，输入输出均在 `ceph://` | split 由 BlockLocation 驱动的本地性命中率；`_temporary` 提交路径（大量 rename）正确性与耗时 |
-| ECO-2 | MR：`fs.defaultFS=ceph://` 全局替换 HDFS | staging 目录、job history、`/user/<user>` 家目录自动创建 |
-| ECO-3 | YARN：日志聚合走 `FileContext`（`CephFs`） | AbstractFileSystem 路径在长跑 NM 下的 mount 生命周期（§8） |
-| ECO-4 | Spark 3.4：读写 Parquet/ORC、event log、checkpoint | FileOutputCommitter v1/v2 的 rename 语义；`hflush` 依赖 |
-| ECO-5 | Hive 3.1：外部表、`INSERT`、动态分区 | 目录 rename 原子性、分区扫描的 `listStatus` 性能 |
-| ECO-6 | DistCp：HDFS→Ceph、Ceph→Ceph、`-update` | **`getFileChecksum` 未实现（返回 null）**对 `-update`/校验的实际影响，须给出使用口径 |
-| ECO-7 | HBase（评估性，非承诺） | WAL 依赖 `hflush` 持久化保证 + 低延迟；结论决定是否列为"支持" |
-| ECO-8 | 与 HDFS 共存 | 同一集群双 scheme 并用，classpath/native 库不冲突 |
+| `getOwner()` 在 uid ≠ 进程 uid 时返回**数字字符串**，`getGroup()` **恒为数字** | `CephFileSystem#ownerName/groupName` | MR staging 属主校验、`access()` 鉴权、Hive/YARN 目录准备 |
+| `setOwner` 仅接受数字 uid/gid（非数字静默 warn） | `CephFileSystem#setOwner` | Hive 建库建表、运维脚本 |
+| 已打开 reader 看不到后续追加（长度快照） | `CephInputStream` 构造器 | HBase WAL、流式 tail 读 |
+| `CephFs` 仅覆写 `getUriDefaultPort`，`FileContext` 语义全靠基类 | `CephFs.java` | Spark Structured Streaming checkpoint、YARN 日志聚合 |
+| 无委托 Token；单一 cephx id | 基类 `addDelegationTokens` | **Kerberos 安全集群**的适用性 |
+| `getFileChecksum` 为 null、`truncate`/`concat` 不支持、能力声明仅 2 项 | 基类默认 | DistCp `-update`、Flink RecoverableWriter |
+
+**组件覆盖面**：FsShell/CLI、MapReduce、YARN（日志聚合/本地化/长跑 NM）、Hive、
+Spark（批 + Structured Streaming）、HBase（评估）、Tez/Flink（评估）、DistCp、
+Kerberos 安全集群与多租户形态、HDFS 混合部署与迁移。
+
+**最终对外交付物是《组件支持矩阵》**：每个组件标注 支持 / 受限支持（附条件）/ 不支持
+＋ 配置示例——用户据此判断自己的技术栈能否使用本连接器，其价值高于任何单条用例。
 
 ---
 
@@ -347,14 +359,16 @@ L0/L1/L2 全绿；E2 集群 `HEALTH_OK`；环境指纹已归档；测试用 ceph
 
 | 阶段 | 任务书 | 内容 | 交付物 | 估时 |
 |---|---|---|---|---|
+| **SPIKE** | （并入 T11 任务书 §0，**最先执行**） | 8 条高风险预测的证伪：MR staging 属主校验、`access()` 组鉴权、chown 静默失效、Spark checkpoint 原子创建、HBase WAL 可见性、Kerberos 适用性、DistCp `-update`、YARN 日志聚合权限 | `docs/ECO-FINDINGS.md` 初版 | 3–5 d |
 | **T08** | 测试基础设施与质量门禁 | E2/E3 环境脚本、CI 流水线、L0 全套、L1/L2 扩展（官方 FSMainOperations / FileContext 套件） | `scripts/env/*`、`scripts/ci/*`、pom 插件、新增契约套件 | 5–7 d |
 | **T09** | 功能深化与故障注入 | L3 全量 + L4 十五类故障 + 预期行为表 | `ITest*` 扩展、`scripts/fault/*`、DEPLOY.md 排查表更新 | 7–10 d |
 | **T10** | 性能与容量基准 | L5 全矩阵 + 内核 mount 对照 + 敏感点分析 | `scripts/bench/*`、`docs/perf/BASELINE-1.1.0.md` | 5–7 d |
-| **T11** | 生态集成与兼容矩阵 | L6：MR/Spark/Hive/YARN/DistCp + 兼容矩阵 | `scripts/eco/*`、`docs/COMPAT.md` | 7–10 d |
+| **T11** | 生态集成与兼容矩阵 | L6：8 条 spike + 88 条组件场景（CLI/MR/YARN/Hive/Spark/HBase/Tez/Flink/DistCp/安全集群/混合部署）+ 四维兼容矩阵 | `scripts/eco/*`、`docs/ECO-FINDINGS.md`、**《组件支持矩阵》**、`docs/COMPAT.md` | 14–18 d（本方案最大阶段） |
 | **T12** | 安全、长稳与发布验收 | §10 安全项 + 72h 长稳 + L7 部署运维 + 发布评审 | `scripts/soak/*`、`docs/RELEASE-READINESS-1.1.0.md` | 5–7 d（含 72h 挂机） |
 
-T08 是硬前置；T09/T10 可在 T08 后并行（须错开独占 E2 的时段——性能与故障注入不得同时跑）；
-T11 依赖 T08 的 E3；T12 收口。
+**SPIKE 最先执行**（成本低、结论影响面大：若 SP-01/SP-04/SP-06 成立，T11 范围与产品路线
+都要变，甚至需要先做一轮产品增强再继续）；T08 是其余阶段的硬前置；T09/T10 可在 T08 后
+并行（须错开独占 E2 的时段——性能与故障注入不得同时跑）；T11 依赖 T08 的 E3；T12 收口。
 
 ---
 
@@ -373,12 +387,14 @@ T11 依赖 T08 的 E3；T12 收口。
 
 ## 16. 交付物清单
 
-1. `docs/TEST-PLAN.md`（本文）、`docs/TEST-CASES.md`（用例清单）；
+1. `docs/TEST-PLAN.md`（本文）、`docs/TEST-CASES.md`（用例清单）、
+   `docs/TEST-CASES-ECO.md`（生态组件场景设计）；
 2. `docs/tasks/T08–T12`（五份任务书）；
 3. 环境与工具脚本：`scripts/env/`、`scripts/ci/`、`scripts/fault/`、`scripts/bench/`、
    `scripts/soak/`、`scripts/eco/`；
 4. 测试代码：L1/L2/L3 新增 `Test*`/`ITest*`；
-5. 结果文档：`docs/perf/BASELINE-1.1.0.md`、`docs/COMPAT.md`、
+5. 结果文档：`docs/perf/BASELINE-1.1.0.md`、`docs/COMPAT.md`、`docs/FAULT-BEHAVIOR.md`、
+   `docs/ECO-FINDINGS.md`、**《组件支持矩阵》**（README + DEPLOY.md）、
    `docs/RELEASE-READINESS-1.1.0.md`，DEPLOY.md 排查表与"安全模型/已知限制"章节更新；
 6. PROGRESS.md 各阶段登记。
 
@@ -396,6 +412,9 @@ T11 依赖 T08 的 E3；T12 收口。
 | A-6 | ENOSPC/配额异常映射为可诊断的 Hadoop 异常 | F09/F10 显示错误不可读 | `mapCephException` 仅映射 3 类 |
 | A-7 | 指标暴露（连接数、fd、IO 计数）用于生产监控 | L7 运维验收要求 | 当前仅 `FileSystem.Statistics` |
 | A-8 | 发布用 `libcephfs_jni.so` 的纯净构建与签名 | L0 制品检查 | PROGRESS T07 遗留 2/3 |
+| A-9 | **owner/group 的用户名映射**（可选 NSS 查询或配置化 uid↔用户名映射表） | SP-01/SP-02/SP-03 任一成立——MR 提交、`access()` 鉴权、chown 受影响 | `ownerName`/`groupName` 返回数字字符串；架构文档 §4-6 明确"不做 NSS 查询" |
+| A-10 | **安全集群支持口径**（委托 Token 不可行时，keyring 分发方案与风险边界） | SP-06 成立 | 基类 `addDelegationTokens` + 单一 cephx id |
+| A-11 | `truncate` 实现或明确能力声明 | ECO-FLK-02 / ECO-HIVE-09 需要 | 未实现，`hasPathCapability` 亦未声明 |
 
 ## 附录 B — 工具清单
 

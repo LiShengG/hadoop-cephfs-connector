@@ -657,3 +657,38 @@
      一轮产品增强任务，排期需预留缓冲。
 
 - 环境变更：无（仅新增文档，未改代码、pom、脚本）。
+
+### 补充（2026-08-12）：生态组件使用场景测试设计
+
+用户指出"对 hadoop 各个组件使用场景也没有测试"——原方案的 ECO 段仅 13 条冒烟级用例
+（"跑通 wordcount"级别），只证明主干 API 可用，不构成"各组件按真实使用姿势可用"的证据。
+补充 `docs/TEST-CASES-ECO.md`：
+
+- **方法**：从组件的真实使用场景（含具体配置项与目录）反推其依赖的 FS API 与语义假设，
+  再对照连接器实现事实定风险等级，而非每组件跑一个 hello world；
+- **§2 API 支撑面盘点**（25 项）：列出生态重度依赖但连接器为基类默认或存在偏差的能力，
+  高风险 6 项 —— 属主/组字符串（uid ≠ 进程 uid 时返回数字、group 恒为数字）、
+  基类 `access()` 用这些字符串做鉴权、`setOwner` 仅认数字、写入中文件对已打开 reader
+  不可见、`CephFs` 仅覆写 `getUriDefaultPort` 导致 FileContext 语义全靠基类、
+  无委托 Token + 单一 cephx id；
+- **§3 高风险预测清单 SP-01–SP-08**（**基于代码事实的预测，尚未证实**）：
+  最关键的是 SP-01 —— `JobSubmissionFiles.getStagingDir` 用 `FileStatus.getOwner()`
+  字符串与提交用户比对，连接器在 uid ≠ 进程 uid 时返回数字字符串，
+  预测将导致 `fs.defaultFS=ceph://` 的 MR 作业**无法提交**（proxy user 场景尤甚）；
+  其余为 access 组鉴权、chown 静默失效、Spark Structured Streaming checkpoint
+  原子创建语义、HBase WAL 可见性、Kerberos 集群适用性、DistCp `-update`、
+  YARN 日志聚合目录权限。8 条均为低成本可证伪，排在 T08 之前执行；
+- **§4 分组件场景用例 88 条**：CLI 8 / MapReduce 14 / YARN 8 / Hive 14 / Spark 10 /
+  HBase 5 / Tez·Flink 4 / DistCp 7 / 安全与多租户形态 5 / 混合部署与迁移 5，
+  每条标注依赖的 FS 行为与判定标准；
+- **对外交付物定为《组件支持矩阵》**：每组件标注 支持/受限支持（附条件）/不支持 +
+  配置示例，价值高于任何单条用例。
+
+同步更新：TEST-PLAN §1.2 G5（升级为最高风险并列出六处偏差）、§2 生态阈值、§11（改为
+指向新篇 + 偏差表）、§14 排期（新增 SPIKE 阶段；T11 工期 7–10 d → 14–18 d）、
+附录 A 新增 A-9（owner/group 用户名映射）/A-10（安全集群口径）/A-11（truncate）；
+TEST-CASES.md ECO 节改为骨架并指向新篇（用例总量 147 → 230）；
+T11 任务书按新范围重写（新增 §0 前置 spike、8 条验收标准）；README 导航与阶段图。
+
+> 判定口径提醒：SP-01–SP-08 是**预测**，不是结论。执行 spike 时须以实测输出为准，
+> 证伪同样是有价值的结论，不得为了"符合预期"而调整判定。
