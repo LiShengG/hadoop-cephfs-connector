@@ -692,3 +692,53 @@ T11 任务书按新范围重写（新增 §0 前置 spike、8 条验收标准）
 
 > 判定口径提醒：SP-01–SP-08 是**预测**，不是结论。执行 spike 时须以实测输出为准，
 > 证伪同样是有价值的结论，不得为了"符合预期"而调整判定。
+
+### 补充（2026-08-12）：ECO spike 探针套件落地
+
+按用户要求把 TEST-CASES-ECO.md §3 的 8 条高风险预测做成可执行探针
+（`scripts/spike/`）。本次仍未接触真实 CephFS（本会话环境无集群、无 libcephfs 制品），
+但做了两件能在此环境完成、且实质提升可信度的事：
+
+1. **Hadoop 侧逻辑逐条核对 3.3.6 源码**（不再凭记忆），核对结果写入 TEST-CASES-ECO §3：
+   - `JobSubmissionFiles#getStagingDir`：确为 `FileStatus#getOwner()` 与 4 个候选名的
+     **字符串**比对，附错误消息原文；
+   - `FileSystem#checkAccessPermissions`：`user.equals(stat.getOwner())` 与
+     `ugi.getGroups().contains(stat.getGroup())`，均为**名字**比对；
+   - `DelegateToFileSystem#renameInternal` → 基类 3 参 rename：dst 存在且无 OVERWRITE
+     抛 `FileAlreadyExistsException`；`rename()` 返回 false 则抛
+     `IOException("rename from X to Y failed.")`（**SP-04 因此细化为两层**：
+     非并发语义可能正确，竞态落败方的异常类型才是风险点）；
+   - `DistCpUtils#checksumsAreEqual`：任一侧 null → `INCOMPATIBLE`，而调用方
+     `!equals(FALSE)` **把 INCOMPATIBLE 当作通过** —— 即校验被**静默跳过**而非失败；
+   - `LogAggregationFileController`：TLDIR 01777（不符仅 WARN，不致命）、APP_DIR 0770，
+     `setOwner` **只捕获 UnsupportedOperationException`** —— SP-08 的真实风险因此
+     从"权限校验失败"修正为"属主静默错位、YARN 既不降级也不报错"。
+
+2. **探针在 LocalFileSystem 上做控制组自检**（`scripts/spike/control-localfs.sh`），
+   抓到并修掉自己判据里的两个**假阳性**：
+   - SP-01 初版用"chown 给某 uid 后属主校验失败"判定 —— 这在任何 FS（含 HDFS）上都成立，
+     且无账号的 uid 在本地 FS 上同样报数字。改为"用系统真实账号构造 + 换 UGI 读同一目录
+     看属主是否跟着变"，本地 FS 报出 `daemon` → REFUTED，判据才有区分力；
+   - SP-08 初版把 setOwner 目标设为当前用户，"前后属主相同"无法区分静默无效与本就相同。
+     改为 chown 到另一真实账号。
+   修正后 8 条判别型判据在本地 FS 上全部 REFUTED。
+
+- 交付物：
+  - `scripts/spike/java/`：SpikeOwnerGroup（SP-01/02/03）、SpikeFileContextRename（SP-04）、
+    SpikeVisibility（SP-05）、SpikeDelegationToken（SP-06A）、SpikeCapabilities（SP-07
+    + 能力面实测清单）、SpikeLogAggDirs（SP-08）；
+  - `scripts/spike/`：sp01/sp04/sp05/sp06/sp07/sp08 驱动脚本、`sp01b-mr-submit.sh`（B 层）、
+    `run-all.sh`、`control-localfs.sh`（判据自检）、`lib/common.sh`、`README.md`；
+  - TEST-CASES-ECO.md §3 增补源码核对表与判据设计原则；T11 任务书 §0 接入探针与自检。
+
+- 本环境已验证：全部探针以 `javac -encoding UTF-8` 对 hadoop-common:3.3.6 编译通过；
+  9 个 shell 脚本 `bash -n` 通过；判别型探针在 file:// 上跑通且全部 REFUTED。
+  **未在 CephFS 上运行过，8 条预测仍全部是预测。**
+
+- 踩坑记录（已写进脚本注释，避免后人重复）：
+  探针源码含中文，POSIX locale 下 `javac` 会按 ANSI_X3.4-1968 解析、JVM 按
+  `sun.stdout.encoding` 输出，两处都会产生乱码；`common.sh` 已同时钉死
+  `LC_ALL/LANG`（C.utf8）与 `-Dfile.encoding/-Dsun.stdout.encoding/-Dsun.stderr.encoding`。
+
+- 遗留：探针在真实 CephFS 上的首次运行结果需整理进 `docs/ECO-FINDINGS.md`（脚本只产
+  草稿，不直接写 docs/，避免覆盖人工结论）。

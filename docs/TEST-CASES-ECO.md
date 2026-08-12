@@ -75,16 +75,34 @@
 以下均为**基于代码事实的预测，尚未证实**。每条 spike 应在 0.5–1 天内给出是/否结论，
 总计约 3–5 天，建议**在 T08 大规模建设之前**插入执行。结论直接影响 T11 范围与附录 A。
 
+**已配套可执行探针**：`scripts/spike/`（A 层只需现有 vstart 集群，约 10 分钟跑完；
+B 层需 Hadoop 发行版 / Kerberos 集群）。判据自检见 `scripts/spike/control-localfs.sh`。
+
+**Hadoop 侧逻辑已逐条核对 3.3.6 源码**（不是凭记忆），核对结果：
+
+| 对照点 | 3.3.6 源码事实 |
+|---|---|
+| MR staging 校验 | `JobSubmissionFiles#getStagingDir` 用 `FileStatus#getOwner()` 与 4 个候选名做**字符串**比对，不中即抛 IOException |
+| `access()` 鉴权 | `FileSystem#checkAccessPermissions` 用 `user.equals(stat.getOwner())` 与 `ugi.getGroups().contains(stat.getGroup())`，都是**名字**比对 |
+| FileContext rename | `DelegateToFileSystem#renameInternal` → `fsImpl.rename(src,dst,Rename.NONE)` → 基类 3 参 rename：dst 存在且无 OVERWRITE → `FileAlreadyExistsException`；`rename()` 返回 false → `IOException("rename from X to Y failed.")` |
+| DistCp 校验 | `DistCpUtils#checksumsAreEqual`：任一侧 checksum 为 null → `INCOMPATIBLE`；调用方 `checksumResult = !equals(FALSE)` → **INCOMPATIBLE 被当作通过**，即静默跳过校验 |
+| YARN 日志聚合 | `LogAggregationFileController`：TLDIR 01777（不符仅 WARN）、APP_DIR 0770；`setOwner` **只捕获 `UnsupportedOperationException`** |
+
+> **判据设计原则**（开发探针时踩坑总结）：判据必须能区分"连接器的问题"与
+> "任何 FS 都会如此"。例如"目录属于别人 → 属主校验失败"在 HDFS 上同样成立，
+> 不能作为判据；决定性判据是**同一目录换个 UGI 去读，报告的属主跟着变**，
+> 以及**属于系统真实账号的目录被报成数字串**（名字型 FS 会报出用户名）。
+
 | ID | 预测的失败模式 | 依据 | 若成立的影响 | 判定方式 |
 |---|---|---|---|---|
-| **SP-01** | **MR 作业提交失败**：`JobSubmissionFiles.getStagingDir` 用 `FileStatus.getOwner()` **字符串**与提交用户比对，不匹配即抛 "The ownership on the staging directory ... is not as expected"。连接器在 uid ≠ 进程 uid 时返回**数字字符串**（如 `1005`） | `CephFileSystem#ownerName` | `fs.defaultFS=ceph://` 的 MR 作业**根本无法提交**；proxy user（Hive/Oozie 代提交）尤其危险 | 用非进程 uid 拥有的 staging 目录提交作业；再用 proxy user 提交 |
+| **SP-01** | **MR 作业提交失败 + 属主"谁问就报谁"**：`ownerName` 在 uid == 进程 uid 时返回**当前 UGI 名**、否则返回**数字串** | `CephFileSystem#ownerName` | `fs.defaultFS=ceph://` 的 MR 作业提交失败；属主信息不可信（proxy user 尤甚） | `sp01-owner-group.sh`：A 自建目录；**B 换 UGI 读同一目录看属主是否跟着变**；C chown 给系统真实账号看是否只能报数字 |
 | **SP-02** | **Hive/YARN 的 `access()` 预检误判**：基类 `access` 用 owner/group 字符串与 UGI 比对，group 恒为数字 → 组权限永远匹配不上 | 基类 `FileSystem#access` + `groupName()` | Hive 授权预检、NM 本地化预检出现"有权限却报无权限" | 构造仅靠组权限可访问的目录，调用 `fs.access` |
 | **SP-03** | **chown 静默失效**：Hive 建库/建表、YARN 目录准备普遍执行 `setOwner("hive","hadoop")`，连接器仅 warn 跳过 | `CephFileSystem#setOwner` | 目录属主与组件预期不符，级联触发 SP-01/SP-02 | `hadoop fs -chown` + 组件建库流程 |
 | **SP-04** | **Spark Structured Streaming checkpoint 语义不符**：`CheckpointFileManager` 依赖"目标已存在时 rename 失败"的原子创建；`CephFs` 全量委托，该路径走基类 `FileSystem.rename(src,dst,opts)` | `CephFs` 仅覆写 `getUriDefaultPort` | 流作业 checkpoint 不可靠或直接失败 | FileContext `rename` 无 OVERWRITE 覆盖已存在目标的行为；再跑真实流作业 |
 | **SP-05** | **HBase WAL 不可用**：WAL 回放需读"正在写入"的文件并看到已 `hflush` 的数据；连接器 reader 在 open 时刻快照长度 | `CephInputStream` 构造器 | HBase 判定为"不支持"（本就是评估项，但需明确结论） | 一边写一边 `hflush`，另一 JVM 新开 reader 读取 |
 | **SP-06** | **安全（Kerberos）集群不可用**：连接器不提供委托 Token，NM 容器内需自带 cephx keyring；意味着 keyring 必须分发到所有节点且对作业用户可读 → **任何用户都能取得该 cephx 身份的全部权限** | 基类 `addDelegationTokens` + 单一 cephx id 模型 | 安全集群的适用边界需在 DEPLOY.md 明确写死 | 在 Kerberized E3 上提交作业 |
 | **SP-07** | **DistCp `-update` 退化为按大小/时间比对**：`getFileChecksum` 返回 null | 基类默认 | 跨集群校验能力缺失，需给出使用口径 | HDFS→Ceph `-update` + 人为构造同长度不同内容 |
-| **SP-08** | **YARN 日志聚合目录权限/属主校验失败**：远程日志目录要求特定权限（1777/770）与属主 | 权限 `mode & 01777` + 属主字符串 | 日志聚合不可用 | 按默认配置启用日志聚合 |
+| **SP-08** | **YARN 日志聚合目录属主静默错位**：权限 01777/0770 可达（sticky 保留），但 `setOwner(用户名,组名)` 静默跳过且不抛 `UnsupportedOperationException` → YARN 既不降级也不报错 | `setOwner` 仅认数字 | JHS 可能读不到日志目录（Hadoop 源码注释自己警告过） | `sp08-logagg-dirs.sh`：复刻 `verifyAndCreateRemoteLogDir` 序列，chown 目标取另一真实账号 |
 
 > **要求**：每条 spike 的结论（成立/不成立/部分成立）连同复现命令与原始输出，写入
 > `docs/FAULT-BEHAVIOR.md` 的同体例文件 `docs/ECO-FINDINGS.md`，并回写附录 A。
