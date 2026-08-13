@@ -598,3 +598,166 @@
     `ceph auth del` 删除；集群中测试路径（/t07-cephx、/verify、/e2e-cli-*）均已清理，
     根目录为空，集群仍运行中（HEALTH_WARN 单 OSD 正常告警）。
   - 本地 Maven 仓库无新增依赖。
+
+---
+
+## 生产级测试方案规划 — DONE（2026-08-12）
+
+- 任务性质：**规划**，不含测试执行与代码改动（本次会话所在环境无 Ceph 集群、
+  无 `/home/lsh` 工作树，任何测试结论均不可能在此产生，故只交付方案与任务书）。
+
+- 现状盘点结论：v1.0.0 的全部质量证据（契约 116 + 门控 140 + CLI e2e + 部署终验）
+  均来自**单机 vstart 调试构建集群**（1 mon/1 mds/1 osd、`client.admin` 全权、
+  无副本、无故障域、无 Hadoop 发行版）。功能语义已被官方契约钉死，但
+  **可靠性、性能、长稳、生态、兼容、安全六个维度证据为零**。识别缺口 G1–G10，
+  每条附代码或记录依据（见 TEST-PLAN §1.2），其中代码事实包括：
+  - `CephTalker` 全链路无重试/无重连，`shutdown()` 后恒抛 `CephNotMountedException`；
+  - `CephInputStream` 在 open 时刻快照 `fileLength`，其后追加数据对已打开 reader 不可见；
+  - `listStatus` = `listdir` + 逐项 `lstat`（N+1 次 RPC）；
+  - `setOwner` 仅接受数字 uid/gid（非数字静默 warn 跳过）；`toFileStatus` 取 `mode & 01777`；
+  - 所有请求使用同一 cephx id，Hadoop UGI 身份不下传 MDS（多租户模型须书面澄清）；
+  - `CephFs`（AbstractFileSystem）无 close 钩子，mount 生命周期同 JVM。
+
+- 交付物清单：
+  - `docs/TEST-PLAN.md`：目标与 15 项量化验收阈值、范围、E1–E4 环境矩阵、
+    L0–L7 测试层级、15 类故障注入清单、性能基准方法（以内核态 CephFS mount 为
+    100% 参照）、72h 长稳与泄漏判定、四维兼容矩阵、安全与多租户、生态集成、
+    CI 五级门禁、缺陷分级与准入准出、T08–T12 排期、风险对策、
+    附录 A（8 项测试驱动的代码待决项）；
+  - `docs/TEST-CASES.md`：待建用例 147 例（UT 20 / CT 9 / FN 30 / REL 15 /
+    PERF 15 / SOAK 5 / ECO 13 / COMPAT 12 / SEC 10 / OPS 10 / NEG 8），
+    每例含优先级、环境、判定标准与实现依据；
+  - `docs/tasks/T08-测试基础设施与质量门禁.md`、`T09-功能深化与故障注入.md`、
+    `T10-性能与容量基准.md`、`T11-生态集成与兼容矩阵.md`、`T12-安全长稳与发布验收.md`
+    （沿用既有任务书体例：目标/前置依赖/工作内容/交付物/验收标准/边界与禁止事项）；
+  - README：文档导航新增两行，新增"生产就绪阶段"依赖图。
+
+- 关键方案决策：
+  1. **契约层扩展走 Hadoop 官方基类**（`FSMainOperationsBaseTest`、
+     `FileContextMainOperationsBaseTest` 等），hadoop-common test-jar 已在依赖中，
+     零新增依赖即可补 150+ 官方断言，重点补强当前仅 185 行自研 ITest 覆盖的
+     `FileContext`/`CephFs` 路径（YARN 走的正是它）；
+  2. **性能一律以同机内核态 CephFS mount（fio）为 100% 参照**呈现百分比，
+     绝对值不可比；无环境指纹的性能数据作废；
+  3. **测试与产品增强分离**：本方案只产出结论（附录 A 八项），代码增强另立任务，
+     避免重演"测试阶段顺手改已验收行为"的风险（T06 曾因契约需要改动 T04 已验收的
+     blockSize→layout 口径）；
+  4. 故障注入的每条结论必须回写 DEPLOY.md 排查表，症状文本须真实复现（沿用 T07 体例）。
+
+- 与设计文档的偏差：无（架构文档 §6.2 的三级测试策略被扩展为 L0–L7 七级，
+  原三级作为 L1/L2/L3 保留，未推翻任何既有口径）。
+
+- 遗留/移交事项：
+  1. T08 起需要人工提供物理资源：E2（≥3 节点 Ceph）与 E3（Hadoop 发行版集群），
+     以及 CI 的 self-hosted runner —— 资源不到位时 L3–L7 全部阻塞，
+     降配方案（单机多容器）只可用于功能验证，性能数据须显著标注为"趋势参考"；
+  2. §2 的性能阈值（70%/85%/60%）与长稳阈值（RSS < 5%/24h）为**建议初值**，
+     首轮 T10/T12 实测后可在发布评审上校准一次，之后冻结；
+  3. 附录 A-1（失联/被 evict 后的重连能力）是发布评审必答项，其结论可能触发
+     一轮产品增强任务，排期需预留缓冲。
+
+- 环境变更：无（仅新增文档，未改代码、pom、脚本）。
+
+### 补充（2026-08-12）：生态组件使用场景测试设计
+
+用户指出"对 hadoop 各个组件使用场景也没有测试"——原方案的 ECO 段仅 13 条冒烟级用例
+（"跑通 wordcount"级别），只证明主干 API 可用，不构成"各组件按真实使用姿势可用"的证据。
+补充 `docs/TEST-CASES-ECO.md`：
+
+- **方法**：从组件的真实使用场景（含具体配置项与目录）反推其依赖的 FS API 与语义假设，
+  再对照连接器实现事实定风险等级，而非每组件跑一个 hello world；
+- **§2 API 支撑面盘点**（25 项）：列出生态重度依赖但连接器为基类默认或存在偏差的能力，
+  高风险 6 项 —— 属主/组字符串（uid ≠ 进程 uid 时返回数字、group 恒为数字）、
+  基类 `access()` 用这些字符串做鉴权、`setOwner` 仅认数字、写入中文件对已打开 reader
+  不可见、`CephFs` 仅覆写 `getUriDefaultPort` 导致 FileContext 语义全靠基类、
+  无委托 Token + 单一 cephx id；
+- **§3 高风险预测清单 SP-01–SP-08**（**基于代码事实的预测，尚未证实**）：
+  最关键的是 SP-01 —— `JobSubmissionFiles.getStagingDir` 用 `FileStatus.getOwner()`
+  字符串与提交用户比对，连接器在 uid ≠ 进程 uid 时返回数字字符串，
+  预测将导致 `fs.defaultFS=ceph://` 的 MR 作业**无法提交**（proxy user 场景尤甚）；
+  其余为 access 组鉴权、chown 静默失效、Spark Structured Streaming checkpoint
+  原子创建语义、HBase WAL 可见性、Kerberos 集群适用性、DistCp `-update`、
+  YARN 日志聚合目录权限。8 条均为低成本可证伪，排在 T08 之前执行；
+- **§4 分组件场景用例 88 条**：CLI 8 / MapReduce 14 / YARN 8 / Hive 14 / Spark 10 /
+  HBase 5 / Tez·Flink 4 / DistCp 7 / 安全与多租户形态 5 / 混合部署与迁移 5，
+  每条标注依赖的 FS 行为与判定标准；
+- **对外交付物定为《组件支持矩阵》**：每组件标注 支持/受限支持（附条件）/不支持 +
+  配置示例，价值高于任何单条用例。
+
+同步更新：TEST-PLAN §1.2 G5（升级为最高风险并列出六处偏差）、§2 生态阈值、§11（改为
+指向新篇 + 偏差表）、§14 排期（新增 SPIKE 阶段；T11 工期 7–10 d → 14–18 d）、
+附录 A 新增 A-9（owner/group 用户名映射）/A-10（安全集群口径）/A-11（truncate）；
+TEST-CASES.md ECO 节改为骨架并指向新篇（用例总量 147 → 230）；
+T11 任务书按新范围重写（新增 §0 前置 spike、8 条验收标准）；README 导航与阶段图。
+
+> 判定口径提醒：SP-01–SP-08 是**预测**，不是结论。执行 spike 时须以实测输出为准，
+> 证伪同样是有价值的结论，不得为了"符合预期"而调整判定。
+
+### 补充（2026-08-12）：ECO spike 探针套件落地
+
+按用户要求把 TEST-CASES-ECO.md §3 的 8 条高风险预测做成可执行探针
+（`scripts/spike/`）。本次仍未接触真实 CephFS（本会话环境无集群、无 libcephfs 制品），
+但做了两件能在此环境完成、且实质提升可信度的事：
+
+1. **Hadoop 侧逻辑逐条核对 3.3.6 源码**（不再凭记忆），核对结果写入 TEST-CASES-ECO §3：
+   - `JobSubmissionFiles#getStagingDir`：确为 `FileStatus#getOwner()` 与 4 个候选名的
+     **字符串**比对，附错误消息原文；
+   - `FileSystem#checkAccessPermissions`：`user.equals(stat.getOwner())` 与
+     `ugi.getGroups().contains(stat.getGroup())`，均为**名字**比对；
+   - `DelegateToFileSystem#renameInternal` → 基类 3 参 rename：dst 存在且无 OVERWRITE
+     抛 `FileAlreadyExistsException`；`rename()` 返回 false 则抛
+     `IOException("rename from X to Y failed.")`（**SP-04 因此细化为两层**：
+     非并发语义可能正确，竞态落败方的异常类型才是风险点）；
+   - `DistCpUtils#checksumsAreEqual`：任一侧 null → `INCOMPATIBLE`，而调用方
+     `!equals(FALSE)` **把 INCOMPATIBLE 当作通过** —— 即校验被**静默跳过**而非失败；
+   - `LogAggregationFileController`：TLDIR 01777（不符仅 WARN，不致命）、APP_DIR 0770，
+     `setOwner` **只捕获 UnsupportedOperationException`** —— SP-08 的真实风险因此
+     从"权限校验失败"修正为"属主静默错位、YARN 既不降级也不报错"。
+
+2. **探针在 LocalFileSystem 上做控制组自检**（`scripts/spike/control-localfs.sh`），
+   抓到并修掉自己判据里的两个**假阳性**：
+   - SP-01 初版用"chown 给某 uid 后属主校验失败"判定 —— 这在任何 FS（含 HDFS）上都成立，
+     且无账号的 uid 在本地 FS 上同样报数字。改为"用系统真实账号构造 + 换 UGI 读同一目录
+     看属主是否跟着变"，本地 FS 报出 `daemon` → REFUTED，判据才有区分力；
+   - SP-08 初版把 setOwner 目标设为当前用户，"前后属主相同"无法区分静默无效与本就相同。
+     改为 chown 到另一真实账号。
+   修正后 8 条判别型判据在本地 FS 上全部 REFUTED。
+
+- 交付物：
+  - `scripts/spike/java/`：SpikeOwnerGroup（SP-01/02/03）、SpikeFileContextRename（SP-04）、
+    SpikeVisibility（SP-05）、SpikeDelegationToken（SP-06A）、SpikeCapabilities（SP-07
+    + 能力面实测清单）、SpikeLogAggDirs（SP-08）；
+  - `scripts/spike/`：sp01/sp04/sp05/sp06/sp07/sp08 驱动脚本、`sp01b-mr-submit.sh`（B 层）、
+    `run-all.sh`、`control-localfs.sh`（判据自检）、`lib/common.sh`、`README.md`；
+  - TEST-CASES-ECO.md §3 增补源码核对表与判据设计原则；T11 任务书 §0 接入探针与自检。
+
+- 本环境已验证：全部探针以 `javac -encoding UTF-8` 对 hadoop-common:3.3.6 编译通过；
+  9 个 shell 脚本 `bash -n` 通过；判别型探针在 file:// 上跑通且全部 REFUTED。
+  **未在 CephFS 上运行过，8 条预测仍全部是预测。**
+
+- 踩坑记录（已写进脚本注释，避免后人重复）：
+  探针源码含中文，POSIX locale 下 `javac` 会按 ANSI_X3.4-1968 解析、JVM 按
+  `sun.stdout.encoding` 输出，两处都会产生乱码；`common.sh` 已同时钉死
+  `LC_ALL/LANG`（C.utf8）与 `-Dfile.encoding/-Dsun.stdout.encoding/-Dsun.stderr.encoding`。
+
+- 遗留：探针在真实 CephFS 上的首次运行结果需整理进 `docs/ECO-FINDINGS.md`（脚本只产
+  草稿，不直接写 docs/，避免覆盖人工结论）。
+
+### 补充（2026-08-12）：生产就绪完成度表
+
+按"产品开发进度"视角评估当前阶段并落成活文档 `docs/READINESS.md`：
+
+- **阶段定位**：工程完成（Engineering Complete）/ 技术预览，**不是 GA**。
+  代码写完了，质量证据没写完；版本号 1.0.0 与实际成熟度不匹配。
+- **加权完成度 ≈ 28%**（9 维度加权）。与此前口头估算的 35–40% 有出入，
+  原因是本表把生态兼容权重提到 20%（P0 阻断项）、可靠性提到 15%，以本表为准。
+- 三个刺眼事实：① 全部质量证据来自同一台单机（1 mon/1 mds/1 osd、调试构建、
+  admin 全权）；② 零生态验证——连 Hadoop 发行版都没用过；③ 本仓库 `git tag -l` 为空，
+  PROGRESS T07 记的 v1.0.0 tag 只在开发机本地未推送，所谓"已发布"无分发渠道。
+- 表内每项均给出「要做的事」简述 + 归属阶段 + 达标判据，并定义了
+  Alpha/Beta/RC/GA 四级里程碑各维度的门槛值。
+- 关键路径结论：**物理资源是第一阻塞**——C/D/E/F 四维（共 55% 权重）全部依赖
+  E2/E3 环境，资源不到位则完成度停在 ~30%，与写多少代码无关；
+  最高性价比的下一步是跑 F0 的 8 条 spike（探针已就绪，10 分钟）。
+- 零成本建议 I8：把当前版本重定位为 1.0.0-alpha / Technical Preview，GA 锁 1.1.0，
+  避免用户按 GA 预期使用（尚未执行，待决策）。
