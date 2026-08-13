@@ -38,6 +38,7 @@ scripts/make-dist.sh                         # 一键打部署包
 |---|---|---|
 | [docs/DEPLOY.md](docs/DEPLOY.md) | 部署：安装、配置、cephx 权限、验证、故障排查表 | 部署者/用户 |
 | [docs/DEVELOP.md](docs/DEVELOP.md) | 开发：构建、三级测试、打包、回归门禁 | 开发者 |
+| [docs/READINESS.md](docs/READINESS.md) | **生产就绪完成度表**（9 维度评分、每项要做的事、里程碑门槛、关键路径） | 决策者/测试/开发 |
 | [docs/TEST-PLAN.md](docs/TEST-PLAN.md) | **生产级测试方案**：缺口盘点、环境矩阵、L0–L7 层级、验收阈值、CI 门禁、排期 | 测试/开发/SRE |
 | [docs/TEST-CASES.md](docs/TEST-CASES.md) | 生产级用例清单（147 例骨架，ID/优先级/判定标准） | 测试/开发 |
 | [docs/TEST-CASES-ECO.md](docs/TEST-CASES-ECO.md) | **Hadoop 生态组件使用场景测试设计**（88 场景 + 8 前置 spike + API 支撑面盘点） | 测试/开发/使用方 |
