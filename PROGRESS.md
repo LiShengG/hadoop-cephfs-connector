@@ -761,3 +761,31 @@ T11 任务书按新范围重写（新增 §0 前置 spike、8 条验收标准）
   最高性价比的下一步是跑 F0 的 8 条 spike（探针已就绪，10 分钟）。
 - 零成本建议 I8：把当前版本重定位为 1.0.0-alpha / Technical Preview，GA 锁 1.1.0，
   避免用户按 GA 预期使用（尚未执行，待决策）。
+
+---
+
+## E1 `.26` 环境复建与全回归 — DONE（2026-08-14）
+
+- 环境修复：
+  - `10.20.40.26` 根 LVM 扩容约 200GiB，验收时根文件系统约 489GiB、可用约 239GiB；
+  - 安装 Maven 3.6.3、Ant 1.10.7，Hadoop 3.3.6 的 `JAVA_HOME` 从不存在的 Java 8
+    路径修正为 OpenJDK 11.0.27（原 `hadoop-env.sh` 已备份）；
+  - 项目部署到 `/code/hadoop-cephfs-connector`；Ceph build 使用
+    `/code/ceph-v16.2.14/build`，CMake 开启 `WITH_CEPHFS_JAVA=ON`，增量产出
+    `libcephfs.jar` 与 `libcephfs_jni.so` 并安装 Maven 坐标
+    `com.ceph:libcephfs:16.2.14`。
+- CephFS：保留原 3 mon + 1 mgr + 4 osd，不重建 OSD；新增 `mds.a`、
+  `cephfs.a.meta`、`cephfs.a.data` 与 CephFS `a`。最终 1/1 MDS active、17 PG
+  active+clean。E1 单机池使用 size=1，因此 `HEALTH_WARN` 的无副本告警为预期。
+- 验收结果：
+  - 无集群单测 122/122 通过；
+  - Hadoop FileSystem 契约 + 自研集成门控 140/140 通过；
+  - smoke 全链路通过；
+  - CLI E2E 全部断言通过，200MB put/get md5 一致；
+  - `scripts/make-dist.sh` 通过，发布包 sha256：
+    `3e4ec5d8fcc4cab6d0fa345b0528c3b9a2443ad8f05b2762393814184b595910`。
+- 进度口径：E1 回归底座恢复，READINESS H4 从阻塞改为部分；因仍是单机 Debug、
+  `client.admin`、size=1，且 E2/E3 尚未部署，九维加权完成度保持约 28%，不增加
+  可靠性、性能、生态或安全得分。
+- 下一步：以 `.26/.44/.28` 建 E2/E3；在清理或复用 `.28` 旧 BlueStore OSD 前必须
+  获得明确确认。

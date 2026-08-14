@@ -1,8 +1,43 @@
 # 开发环境说明（T01 产出，T02+ 连接集群的唯一依据）
 
-> 更新日期：2026-07-05（T01）
+> 更新日期：2026-08-14（`.26` E1 复建验收；T01 原始基线保留）
 
-## 1. vstart Ceph 集群
+## 0. 当前 E1 回归环境（2026-08-14）
+
+| 项 | 值 |
+|---|---|
+| 节点 | `10.20.40.26`（`node-26`） |
+| 项目目录 | `/code/hadoop-cephfs-connector` |
+| Ceph | 16.2.14 Pacific Debug build，`/code/ceph-v16.2.14/build` |
+| ceph.conf | `/code/ceph-v16.2.14/build/ceph.conf` |
+| 拓扑 | 3 mon + 1 mgr + 1 active mds + 4 osd（单机 vstart） |
+| CephFS | `a`；metadata `cephfs.a.meta`，data `cephfs.a.data`；测试池 `size=1` |
+| 客户端 | `client.admin`（仅限 E1；E2 必须改最小权限用户） |
+| Java / Maven / Hadoop | OpenJDK 11.0.27 / Maven 3.6.3 / Hadoop 3.3.6 |
+| Java 绑定 | `dist/native/libcephfs.jar` + `dist/native/libcephfs_jni.so` |
+| 磁盘 | 根文件系统约 489GiB；验收时可用约 239GiB |
+| 健康口径 | `HEALTH_WARN` 可接受，仅允许测试池 size=1 的无副本告警 |
+
+当前路径与脚本历史默认值不同，运行前设置：
+
+```bash
+export CEPH_BUILD=/code/ceph-v16.2.14/build
+export CEPH_CONF_FILE=$CEPH_BUILD/ceph.conf
+```
+
+2026-08-14 验收结果：
+
+- `mvn clean test`：122/122 通过；
+- `CEPH_CONTRACT_TEST=1 mvn verify`：契约 + 集成门控 140/140 通过；
+- `scripts/smoke-test.sh`：Java → JNI → libcephfs → CephFS 全链路通过；
+- `scripts/e2e-cli-test.sh`：全部断言通过，200MB put/get md5 一致；
+- `scripts/make-dist.sh`：通过，产物 `dist/hadoop-cephfs-1.0.0.tar.gz`，sha256
+  `3e4ec5d8fcc4cab6d0fa345b0528c3b9a2443ad8f05b2762393814184b595910`。
+
+> 本环境恢复的是 E1 单机回归底座，不替代 TEST-PLAN.md 定义的 E2 三节点生产仿真
+> 与 E3 Hadoop 生态集群，也不能作为可靠性、性能或高可用证据。
+
+## 1. T01 原始 vstart 基线（历史复现）
 
 | 项 | 值 |
 |---|---|
