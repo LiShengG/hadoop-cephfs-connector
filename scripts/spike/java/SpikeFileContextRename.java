@@ -51,7 +51,12 @@ public final class SpikeFileContextRename {
 
     try {
       sp04a(fs, fc, basePath);
-      sp04b(fs, fc, basePath, threads);
+      if (sp04a2(fs, fc, basePath)) {
+        sp04b(fs, fc, basePath, threads);
+      } else {
+        result("SP-04B", "INCONCLUSIVE",
+            "普通 rename 到不存在的目标已经失败，无法据此判定并发竞态语义");
+      }
     } finally {
       try {
         fs.delete(basePath, true);
@@ -60,6 +65,35 @@ public final class SpikeFileContextRename {
       }
       fs.close();
     }
+  }
+
+  // ── A2：普通 rename 到不存在的目标（并发测试的有效性基线）──────────────
+
+  private static boolean sp04a2(FileSystem fs, FileContext fc, Path base) throws Exception {
+    System.out.println();
+    System.out.println("== SP-04A2：FileContext.rename 到不存在的目标 ==");
+    Path src = new Path(base, "a2-src");
+    Path dst = new Path(base, "a2-dst");
+    touch(fs, src);
+
+    String failure = null;
+    try {
+      fc.rename(src, dst);
+    } catch (Exception e) {
+      failure = e.getClass().getName() + ": " + e.getMessage();
+    }
+
+    boolean moved = failure == null && !fs.exists(src) && fs.exists(dst);
+    if (moved) {
+      result("SP-04A2", "REFUTED",
+          "普通 FileContext.rename 成功，可继续判定并发竞态语义");
+      return true;
+    }
+
+    String detail = failure != null ? failure : "调用返回成功但源/目标状态不符合 rename 语义";
+    result("SP-04A2", "CONFIRMED",
+        "普通 FileContext.rename 到不存在目标失败：" + detail);
+    return false;
   }
 
   // ── A：非并发的"目标已存在" ───────────────────────────────────────────────
@@ -115,7 +149,7 @@ public final class SpikeFileContextRename {
             fc.rename(src, dst);
             return "OK";
           } catch (Exception e) {
-            return e.getClass().getName();
+            return e.getClass().getName() + ": " + e.getMessage();
           }
         }
       });
@@ -132,7 +166,7 @@ public final class SpikeFileContextRename {
         System.out.println("  线程结果: " + r);
         if ("OK".equals(r)) {
           ok++;
-        } else if (FileAlreadyExistsException.class.getName().equals(r)) {
+        } else if (r.startsWith(FileAlreadyExistsException.class.getName() + ":")) {
           alreadyExists++;
         } else {
           other++;

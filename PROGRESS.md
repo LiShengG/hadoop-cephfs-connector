@@ -789,3 +789,23 @@ T11 任务书按新范围重写（新增 §0 前置 spike、8 条验收标准）
   可靠性、性能、生态或安全得分。
 - 下一步：以 `.26/.44/.28` 建 E2/E3；在清理或复用 `.28` 旧 BlueStore OSD 前必须
   获得明确确认。
+
+---
+
+## F0 ECO spike A 层验证 — PARTIAL（2026-08-14）
+
+- 在 `.26` E1 真 CephFS 用独立输出目录完整执行 SP-01～SP-08 A 层；原始结果和日志位于
+  `hadoop-cephfs/target/spike-e1-20260814/`，人工结论固化到 `docs/ECO-FINDINGS.md`。
+- 子判据汇总：8 个 CONFIRMED、3 个 REFUTED、1 个 INCONCLUSIVE。身份/组鉴权、名字型
+  chown、已打开 reader 追读、委托 Token、DistCp checksum 与 YARN 日志目录属主风险成立；
+  01777 sticky、0770 chmod、目标已存在的 rename 异常类型符合预期。
+- SP-04 新增普通 rename 基线并发现 P0：`CephFs#getUriDefaultPort()` 为 6789，但无 authority
+  的委托 FileSystem URI 端口为 -1，导致 `FileContext.rename` 到不存在目标直接抛
+  `InvalidPathException`。因此原“并发 0 成功”不能判作原子性失败，SP-04B 改为
+  INCONCLUSIVE，待修复端口问题后重跑。
+- 测试基础设施修正：`scripts/spike/run-all.sh` 与 `sp01b-mr-submit.sh` 补可执行位；SP-04
+  输出完整异常消息并加入有效性基线，避免误判。
+- 收尾检查：`ceph:///` 无 `spike-*` 残留，17/17 PG active+clean；单机 size=1 的
+  `HEALTH_WARN` 符合 E1 预期。F 维度由 5% 调至 10%，总完成度由约 28% 调至约 29%。
+- 下一轮：优先修复 SP-04A2 并补 FileContext 契约测试；E3 就绪后完成真实 MR/YARN/
+  Spark/DistCp/Kerberos B 层验证。
