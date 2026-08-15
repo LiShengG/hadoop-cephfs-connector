@@ -55,7 +55,6 @@ import org.junit.Test;
 public class ITestCephBlockLocation {
 
   private static final String DEFAULT_CEPH_CONF = "/home/lsh/code/ceph/build/ceph.conf";
-  private static final String DEFAULT_AUTH_ID = "admin";
   /** 测试布局 object size：4MB（3×objectSize 文件仅 12MB，秒级写入）。 */
   private static final long OBJECT_SIZE = 4L * 1024 * 1024;
   private static final int FILE_SIZE = (int) (3 * OBJECT_SIZE);
@@ -80,7 +79,7 @@ public class ITestCephBlockLocation {
 
     conf = new Configuration();
     conf.set(CephConfigKeys.CEPH_CONF_FILE_KEY, cephConfFile());
-    conf.set(CephConfigKeys.CEPH_AUTH_ID_KEY, DEFAULT_AUTH_ID);
+    CephTestConfig.applyAuth(conf);
     conf.setBoolean("fs.ceph.impl.disable.cache", true);
 
     FileSystem created = FileSystem.get(URI.create("ceph:///"), conf);

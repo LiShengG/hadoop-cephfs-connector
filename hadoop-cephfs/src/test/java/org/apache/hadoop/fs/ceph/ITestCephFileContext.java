@@ -58,8 +58,6 @@ import org.junit.Test;
 public class ITestCephFileContext {
 
   private static final String DEFAULT_CEPH_CONF = "/home/lsh/code/ceph/build/ceph.conf";
-  private static final String DEFAULT_AUTH_ID = "admin";
-
   private Configuration conf;
   private FileContext fc;
   private Path base;
@@ -76,7 +74,7 @@ public class ITestCephFileContext {
   private Configuration newConf(boolean withAbstractFsImpl) {
     Configuration c = new Configuration();
     c.set(CephConfigKeys.CEPH_CONF_FILE_KEY, cephConfFile());
-    c.set(CephConfigKeys.CEPH_AUTH_ID_KEY, DEFAULT_AUTH_ID);
+    CephTestConfig.applyAuth(c);
     if (withAbstractFsImpl) {
       // T05 验收标准 3：fs.AbstractFileSystem.ceph.impl 配置生效
       c.set(CephConfigKeys.FS_ABSTRACTFILESYSTEM_CEPH_IMPL_KEY,
