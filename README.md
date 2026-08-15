@@ -5,37 +5,37 @@
 `ceph://` URI 直接读写 CephFS。
 
 **状态：v1.0.0 已发布（2026-07-07，T01–T07 全部完成）。**
-Hadoop FileSystem 契约测试 116/116 通过（仅 1 例按根目录保护口径 override）、
-全量门控测试 140 例绿、CLI 端到端 200MB md5 往返一致；部署包一键产出并按文档
+Hadoop FileSystem 契约测试通过，当前 E2 Release 门控为 128/128 单测、142/142 契约与集成；
+CLI 端到端 200MB md5 往返一致，部署包一键产出并按文档
 在干净 shell 完成终验（见 PROGRESS.md T07 节）。
 
 ## 完成进度表
 
-> 更新日期：2026-08-14 ｜ 评估对象：当前主干（pom 版本 1.0.0）
+> 更新日期：2026-08-15 ｜ 评估对象：当前主干（pom 版本 1.0.0）
 > 明细（每项要做的事、里程碑门槛、关键路径）见 **[docs/READINESS.md](docs/READINESS.md)**。
 
 | # | 维度 | 权重 | 当前 | 加权 | 一句话差距 |
 |---|---|---:|---:|---:|---|
-| A | 功能完整性 | 10 | **90%** | 9.0 | API 面已齐，仅缺 checksum/truncate 等边角 |
-| B | 语义正确性 | 15 | **75%** | 11.3 | E1 已在 `.26` 复建复验，E2 生产仿真尚未验证 |
+| A | 功能完整性 | 10 | **92%** | 9.2 | 多主机 BlockLocation 已验证，仅缺 checksum/truncate 等边角 |
+| B | 语义正确性 | 15 | **85%** | 12.8 | E2 Release 与最小权限已过，官方基类及规模边界仍待补 |
 | C | 可靠性与恢复 | 15 | **0%** | 0.0 | 15 类故障一条没测；代码无重试无重连 |
 | D | 性能与容量 | 10 | **0%** | 0.0 | 无任何基线，不知道比内核 mount 慢多少 |
 | E | 长稳与资源 | 10 | **5%** | 0.5 | 最长跑过 300 秒 |
 | F | 生态兼容 | 20 | **10%** | 2.0 | F0 A 层已有结论，真实 MR/YARN/Hive/Spark 仍未运行 |
 | G | 安全与多租户 | 8 | **20%** | 1.6 | 身份模型未澄清，安全集群适用性未知 |
-| H | 工程化与门禁 | 7 | **20%** | 1.4 | E1 已恢复；仍无 CI、E2/E3 供给脚本与质量门禁 |
+| H | 工程化与门禁 | 7 | **30%** | 2.1 | E2 已建并有只读检查；仍缺一键重建、E3、CI 与质量门禁 |
 | I | 文档与交付 | 5 | **70%** | 3.5 | 部署文档扎实，缺支持矩阵与安全边界 |
-| | **合计** | **100** | | **≈ 29%** | 距 GA 尚远，差的是证据不是功能 |
+| | **合计** | **100** | | **≈ 32%** | 距 GA 尚远，差的是证据不是功能 |
 
 ```
-A 功能完整性  ██████████████████░░  90%
-B 语义正确性  ███████████████░░░░░  75%
+A 功能完整性  ██████████████████░░  92%
+B 语义正确性  █████████████████░░░  85%
 C 可靠性      ░░░░░░░░░░░░░░░░░░░░   0%   ← 权重 15，全空
 D 性能        ░░░░░░░░░░░░░░░░░░░░   0%   ← 权重 10，全空
 E 长稳        █░░░░░░░░░░░░░░░░░░░   5%
 F 生态兼容    ██░░░░░░░░░░░░░░░░░░  10%   ← A 层有结论，真实组件仍为空
 G 安全        ████░░░░░░░░░░░░░░░░  20%
-H 工程化      ████░░░░░░░░░░░░░░░░  20%
+H 工程化      ██████░░░░░░░░░░░░░░  30%
 I 文档        ██████████████░░░░░░  70%
 ```
 
@@ -53,9 +53,9 @@ I 文档        ██████████████░░░░░░  70
 **开发构建**（本机，环境事实见 [docs/ENV.md](docs/ENV.md)）：
 
 ```bash
-cd hadoop-cephfs && mvn clean package        # 构建 + 无集群单测 122 例
+cd hadoop-cephfs && mvn clean package        # 构建 + 无集群单测 128 例
 scripts/cluster-up.sh                        # vstart 集群
-CEPH_CONTRACT_TEST=1 mvn verify              # 契约 + 集成 140 例（需集群）
+CEPH_CONTRACT_TEST=1 mvn verify              # 契约 + 集成 142 例（需集群）
 scripts/e2e-cli-test.sh                      # CLI 端到端（200MB md5 往返）
 scripts/make-dist.sh                         # 一键打部署包
 ```
@@ -73,6 +73,7 @@ scripts/make-dist.sh                         # 一键打部署包
 | [docs/TEST-CASES.md](docs/TEST-CASES.md) | 生产级用例清单（147 例骨架，ID/优先级/判定标准） | 测试/开发 |
 | [docs/TEST-CASES-ECO.md](docs/TEST-CASES-ECO.md) | **Hadoop 生态组件使用场景测试设计**（88 场景 + 8 前置 spike + API 支撑面盘点） | 测试/开发/使用方 |
 | [docs/ECO-FINDINGS.md](docs/ECO-FINDINGS.md) | **ECO spike 实测结论**（`.26` A 层证据、缺陷与后续门禁） | 测试/开发/决策者 |
+| [docs/E2-ENV.md](docs/E2-ENV.md) | **E2 三节点环境指纹**（拓扑、设备白名单、Release 复验与状态检查） | 测试/SRE/开发 |
 | [docs/ENV.md](docs/ENV.md) | 本机开发环境事实（集群、JNI 产物、路径） | 开发者 |
 | [docs/00-顶层架构设计.md](docs/00-顶层架构设计.md) | 总体架构、分层设计、语义映射、配置项、风险清单 | 所有 agent 必读 |
 | [docs/01-协作规范.md](docs/01-协作规范.md) | 多 agent 协作流程、接口冻结规则、进度登记 | 所有 agent 必读 |
@@ -99,7 +100,7 @@ E1 单机回归环境（.26：122 单测 + 140 门控 + CLI E2E + 打包）     
  │
 SPIKE 8 条高风险预测的证伪（A 层完成，B 层待 E3，见 ECO-FINDINGS.md）       PARTIAL 2026-08-14
  │
-T08 测试基础设施与质量门禁（E2/E3 环境、CI、L0 门禁、官方契约套件扩展）  PLANNED
+T08 测试基础设施与质量门禁（E2 已建并复验；E3、CI、官方套件待补）       PARTIAL 2026-08-15
  ├─> T09 功能深化与故障注入（L3 + 15 类故障场景）                        PLANNED
  ├─> T10 性能与容量基准（对照内核 mount 建立基线）                       PLANNED
  ├─> T11 生态集成与兼容矩阵（88 组件场景 + 四维矩阵 → 组件支持矩阵）     PLANNED
@@ -111,7 +112,7 @@ T08 测试基础设施与质量门禁（E2/E3 环境、CI、L0 门禁、官方�
 > 而冒烟测试打不到的语义偏差。详见 [docs/TEST-CASES-ECO.md](docs/TEST-CASES-ECO.md)。
 > `.26` A 层实测结论见 [docs/ECO-FINDINGS.md](docs/ECO-FINDINGS.md)：已发现
 > 并修复 `FileContext.rename` 默认端口、普通文件原子 no-replace 与并发 mkdirs；
-> 多 JVM、崩溃恢复及 Spark 3.4.4 local checkpoint 已通过。身份、可见性与安全边界问题仍在。
+> 多 JVM、崩溃恢复及 Spark 3.4.4 local checkpoint 已在 E2 Release 通过。身份、可见性与安全边界问题仍在。
 
 ## 关键环境事实（开发机）
 
@@ -122,6 +123,10 @@ T08 测试基础设施与质量门禁（E2/E3 环境、CI、L0 门禁、官方�
   `CEPH_BUILD=/code/ceph-v16.2.14/build` 与 `CEPH_CONF_FILE=$CEPH_BUILD/ceph.conf`。
 - 当前 E1 发布包 sha256：
   `3e4ec5d8fcc4cab6d0fa345b0528c3b9a2443ad8f05b2762393814184b595910`。
+- 当前 E2：`.44/.26/.28` 三节点，3 MON + 2 MGR + 6 OSD + 3 MDS，池
+  `size=3/min_size=2`；官方 Ceph 16.2.14 Release 服务端、16.2.15 Release JNI 客户端，
+  受限 `client.hadoop` 下 128/128 单测与 142/142 契约/集成通过。详见
+  [docs/E2-ENV.md](docs/E2-ENV.md)。
 - 以下为 T01–T07 原始开发机基线，继续保留用于历史结果复现：
 
 - 工作根目录：`/home/lsh/code`

@@ -830,3 +830,27 @@ T11 任务书按新范围重写（新增 §0 前置 spike、8 条验收标准）
   `hadoop-cephfs/target/spike-sp04-linkfix-20260815/` 与 `hadoop-cephfs/target/spike-spark/`；
   CephFS 测试根均已清理。
 - 后续：在非 Debug E2/E3 复验，并完成 Spark 其余 9 个生态场景；当前总完成度不调整。
+
+---
+
+## T08 E2 三节点生产仿真底座与 Release 复验 — PARTIAL（2026-08-15）
+
+- 建成 Cephadm E2：`.44/.26/.28`，Ceph 16.2.14 官方 Release 容器，3 MON、2 MGR、
+  6 OSD、3 MDS，public/cluster 双网络，`cephfs-e2` 两池均 `size=3/min_size=2`；最终
+  `HEALTH_OK`、289/289 PG active+clean。
+- 仅使用白名单空盘：`.44 sdb/sdc`、`.26 sdc/sdd`、`.28 sdd/sdg`；`.28` 四块旧
+  BlueStore 盘未触碰。`.26` E1 vstart 已停止但数据保留。
+- NTP 与网络环境已修复：`.44/.28` 从失效的 `10.20.40.31` 改为已验证公网源；三节点
+  `ens224` 持久配置为 `172.30.40.0/24`。两台错误类型的 `/var/log/ceph` 普通文件均已
+  改名备份后恢复为目录。
+- 创建最小权限 `client.hadoop`（mon r / mds rwp / osd rw，仅限 `cephfs-e2`）；测试夹具
+  新增 `CEPH_AUTH_ID/CEPH_AUTH_KEYRING` 覆盖，不再要求硬编码 admin。
+- Release 客户端为 Pacific 16.2.15 官方包，运行时强制 `/usr/lib`，避免命中
+  `/usr/local/lib` 旧 Debug 库；空 `CEPH_ARGS` 下 128/128 单测、142/142 契约+集成通过。
+  BlockLocation 三副本地址真实返回 `.26/.28/.44`。
+- SP-04B Release 连续 5 轮全为 1 成功 + 7 EEXIST。Spark 3.4.4 顺序重启、双实例竞争与
+  第三 JVM恢复全部符合预期，未出现 `boost::bad_get`/abort；失败竞争者残留一个
+  `.metadata.<uuid>.tmp`，需纳入已知限制和清理口径。
+- 交付：[docs/E2-ENV.md](docs/E2-ENV.md)、只读基线脚本 `scripts/env/e2-status.sh`。
+- T08 仍未完成：E3、CI/JaCoCo/静态/CVE 门禁、官方 FSMainOperations/FileContext 扩展套件、
+  E2 一键重建脚本仍待后续。

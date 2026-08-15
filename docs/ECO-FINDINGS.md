@@ -1,7 +1,7 @@
 # Hadoop 生态 spike 实测结论
 
-> 执行日期：2026-08-14；SP-04 修复复验：2026-08-15
-> 环境：E1 `10.20.40.26`，Ceph 16.2.14，Hadoop 3.3.6，OpenJDK 11.0.27  
+> 执行日期：2026-08-14；SP-04 E1/E2 修复复验：2026-08-15
+> 环境：E1 `10.20.40.26`；E2 三节点 Release Ceph 16.2.14；Hadoop 3.3.6，OpenJDK 11.0.27
 > 范围：SP-01～SP-08 的 A 层探针；真实 MR/YARN/Kerberos 组件验证仍待 E3
 
 ## 1. 执行与证据
@@ -75,10 +75,25 @@ sink：首次 batch 0/40 行，重启后同 query ID 推进至 batch 1/80 行。
 - 分项日志：`.26:/code/hadoop-cephfs-connector/hadoop-cephfs/target/spike-sp04-fix-20260815/logs/sp04-filecontext-rename.log`
 - Spark 日志：`.26:/code/hadoop-cephfs-connector/hadoop-cephfs/target/spike-spark/`
 
+### 3.1 E2 Release 复验
+
+三节点 E2 使用 3 MON、2 MGR、6 OSD、3 MDS，CephFS 池为 `size=3/min_size=2`，客户端
+使用受限 `client.hadoop`。Pacific 16.2.15 Release JNI/libcephfs 在 16.2.14 Release 服务端上、
+不设置 lockdep workaround 时，SP-04B 连续 5 轮均严格为 1 成功 + 7 EEXIST。
+
+Spark 顺序重启保持 query ID 并从 batch 0/40 行推进到 batch 1/80 行；双实例竞争为一个成功、
+一个 `SparkConcurrentModificationException`，第三 JVM恢复到 batch 1/80 行。未再出现 E1
+Debug 客户端曾观察到的 `boost::bad_get`/abort。失败竞争者会留下一个
+`.metadata.<uuid>.tmp`，不影响正式 checkpoint 恢复，但需纳入清理口径。
+
+- E2 环境与复现命令：[E2-ENV.md](E2-ENV.md)
+- SP-04 日志：`.26:/code/hadoop-cephfs-connector/hadoop-cephfs/target/spike-e2-release/`
+- Spark 日志：`.26:/code/hadoop-cephfs-connector/hadoop-cephfs/target/spike-spark-e2-release/`
+
 ## 4. 后续门禁
 
-1. 在非 Debug E2/E3 重做 Spark checkpoint，并覆盖目录 rename、进程崩溃后的临时源清理；
-   当前结论仅支持普通文件的原子目标发布，不外推到 Delta/Iceberg 全部提交路径。
+1. E2 Release checkpoint 已完成；下一步在 E3 分布式 Spark 覆盖目录 rename、失败/崩溃后的
+   临时源清理。当前结论仅支持普通文件的原子目标发布，不外推到 Delta/Iceberg 全部提交路径。
 2. 明确 owner/group 名字映射与 `setOwner` 失败语义；SP-01/02/03/08B 未解决前，不声明
    MR staging、Hive 多用户或 YARN 日志聚合受支持。
 3. 在 E3 运行真实 MR 提交、YARN 日志聚合、Spark checkpoint、DistCp 与 Kerberos 容器验证。
