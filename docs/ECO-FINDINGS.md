@@ -1,7 +1,7 @@
 # Hadoop 生态 spike 实测结论
 
 > 执行日期：2026-08-14；SP-04 E1/E2 与 E3 分布式复验：2026-08-15
-> 环境：E1 `10.20.40.26`；E2/E3 三节点 Release Ceph 16.2.14；Hadoop 3.3.6，Hive 4.0.1，Spark 3.4.4，OpenJDK 11
+> 环境：E1 `10.20.40.26`；E2/E3 三节点 Release Ceph 16.2.14；Hadoop 3.3.6，Hive 4.0.1，Tez 0.10.4，Spark 3.4.4，OpenJDK 11
 > 范围：SP-01～SP-08 的 A 层探针；真实 MR/YARN/Hive/Spark B 层已部分完成，Kerberos SP-06B 等仍待验证
 
 ## 1. 执行与证据
@@ -134,6 +134,16 @@ SP-06A 也在真实 E3 以 `hadoope3` 复验：CephFS canonical service 非空�
 YARN 依赖节点本地共享 cephx 身份。因为当前认证仍是 simple、HDFS 控制组也返回 0，不能据此
 判定 Kerberos 作业行为；SP-06B 仍须隔离的安全集群。
 
+第四轮部署 Tez 0.10.4，最终 application `0033` 在 `.26/.28` 完成 6/6 DAG，Hive 的
+Text/ORC/Parquet、动态分区、MSCK、ANALYZE 与 TRUNCATE 结果均与 MR 一致。Tez runtime
+archive 由 HDFS 本地化，AM/task 通过节点本地额外 classpath 和 native 环境访问 CephFS。
+部署过程中实证了三项必需配置：使用发行包内 `share/tez.tar.gz`、向 AM/task classpath 加入
+连接器与 `libcephfs.jar`、只注入一次 `CEPH_JNI_PATH`。
+
+成功并不代表资源门禁通过：`0033` 从 11 条服务 session 增到 13 条，新增两条均对应死 PID；
+失败应用和 `yarn logs` 还会留下更多成组 session，并曾阻塞后继 Hive 的 native `lstat`。
+故本轮只增加 F 维度 Tez 兼容证据，不增加 E/C。
+
 ## 4. 后续门禁
 
 1. E3 分布式 checkpoint 与原子提交后失败恢复已完成；下一步覆盖目录 rename、失败/崩溃后的
@@ -141,6 +151,6 @@ YARN 依赖节点本地共享 cephx 身份。因为当前认证仍是 simple、H
 2. 明确 owner/group 名字映射与 `setOwner` 失败语义；SP-01/02/03/08B 未解决前，不声明
    MR staging、Hive 多用户或 YARN 日志聚合受支持。
 3. E3 的 MR committer v1/v2、推测执行、资源正确本地化、DistCp 双向、SP-07 负向以及 Hive
-   MR 基础矩阵已完成；继续 Hive Tez/ACID、Kerberos SP-06B、Spark 格式/提交协议、
+   MR/Tez 基础矩阵已完成；继续 Hive ACID/授权、Kerberos SP-06B、Spark 格式/提交协议、
    DistributedCache 跨应用复用和 DistCp 余项。
 4. 将无 checksum、无委托 Token和已打开 reader 长度快照写入支持矩阵与安全边界。

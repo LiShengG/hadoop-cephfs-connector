@@ -1,7 +1,7 @@
 # E3 Hadoop/YARN/Hive/Spark 三节点环境
 
 > 建成及首轮验证日期：2026-08-15。E3 与 [E2-ENV.md](E2-ENV.md) 共用
-> `.44/.26/.28` 三节点和 `cephfs-e2`，用于真实发行版 MR、YARN 与 Spark 分布式验证。
+> `.44/.26/.28` 三节点和 `cephfs-e2`，用于真实发行版 MR、YARN、Hive/Tez 与 Spark 分布式验证。
 
 ## 1. 固定指纹与拓扑
 
@@ -11,6 +11,7 @@
 | Hadoop | Apache Hadoop 3.3.6，`/opt/hadoop-e3` |
 | Spark | Apache Spark 3.4.4，`/opt/spark-e3` |
 | Hive | Apache Hive 4.0.1，`/opt/hive-e3`；embedded Derby 元数据仓库 |
+| Tez | Apache Tez 0.10.4，`/opt/tez-e3`；runtime archive 位于 HDFS `/e3/tez/tez-0.10.4.tar.gz` |
 | Java | OpenJDK 11 |
 | 服务用户 | `hadoope3`，UID/GID 2001 |
 | NameNode / ResourceManager / JHS | `node-44` |
@@ -117,12 +118,40 @@ Hive 4 的 protobuf 3.x 曾被 Hadoop protobuf 2.5.0 抢先加载并触发 `NoSu
 必须设置 `mapreduce.job.user.classpath.first=true`。此外 Hive 4 严格 managed-table 规则会把
 当前建表转换为带 `external.table.purge=TRUE` 的 `EXTERNAL_TABLE`，因此这轮证明的是
 Text/ORC/Parquet、分区与 DDL/DML 路径，不等同于 ACID 表验证。Hive-on-MR 在 Hive 4 中已是
-兼容路径；Tez 仍需单独覆盖。
+兼容路径；Tez 覆盖见下一节。
 
 实验也再次暴露 native mount 生命周期问题：一次失败的 Hive JVM 留下 14 条死 PID MDS
 session，精确确认无请求/caps 使用者后才逐条 evict；最终成功套件结束时 session 从 6 条服务
 基线升至 13 条，新增 7 条均属于仍存活的 NodeManager/JHS。它们不是脏输出，但不满足
 SOAK-05 的会话归零门禁。
+
+### Hive 4.0.1 on Tez 0.10.4
+
+Tez 0.10.4 外层二进制包 SHA-512 为
+`9215244c512e91e1650ba1470c2b2de1ed5ac9e1017f321ec5638c6a33e7fee0dcf616196403d301a0e00e7fa7bc77d9c9a4afac911c723a79e786505fd2e546`。
+真正供 YARN 本地化的是包内 77,713,127 字节的 `share/tez.tar.gz`，其 SHA-512 为
+`3cb8a27f60119be0a8f85a4cd73024d6f7b4fec856ff65ceeaeb91553c973a2b002cebdc4ebc94d774b1d8d390bd862b56ac4d297477591d9b7836b358487ddd`。
+[`conf/e3/tez-site.xml`](../conf/e3/tez-site.xml) 使用 HDFS 分发这个 runtime archive，并通过
+`tez.cluster.additional.classpath.prefix` 引用三节点已安装的连接器与 `libcephfs.jar`；Hive
+warehouse、scratch、Tez staging 和业务数据仍使用显式 authority 的 CephFS URI。
+
+[`scripts/eco/e3-hive-tez-suite.sql`](../scripts/eco/e3-hive-tez-suite.sql) 的最终 application
+`0033` 用 58 秒完成 6 个 DAG，`submittedDAGs=6, successfulDAGs=6, failedDAGs=0`。AM 在
+`.26`，其余容器分布于 `.26/.28`。TextFile 聚合、ORC 三分区动态写入/回读、Parquet CTAS、
+ANALYZE、MSCK `p3/p4` 和 TRUNCATE 后 0 行均与 MR 引擎结果一致；没有 `.hive-staging`，
+只留下空的 `_tez_session_dir` 父目录。
+
+部署排错留下三类可复现配置边界：application `0029/0030` 分别证明外层 archive 的目录层级
+和 Hadoop runtime classpath 不适合作为 `tez.lib.uris`；`0031` 证明 Tez AM 还必须显式取得
+CephFS 连接器 jar；`0032` 已进入真实 DAG，但 AM 与 task 同时注入 `CEPH_JNI_PATH` 会把单一
+文件路径拼成冒号列表，使 `.28` Map task JNI 加载失败。最终配置只在 AM 层注入 native 环境，
+task 从 AM 继承，避免重复。
+
+会话生命周期仍不合格。作业前服务基线为 11 条 session；`0033` 成功后为 13 条，新增两条
+分别属于已退出的 Hive 客户端与 `.26` Tez 容器，caps 总数 194、in-flight request 为 0。
+保留快照后才精确 evict 这两条死 session。此前失败应用和一次 `yarn logs` 还各自留下成组的
+死 PID session，并真实阻塞后继 Hive 的 native `lstat` 约 4 分钟；因此 F 可增加 Tez 兼容
+证据，但 E/C 不得上调。
 
 ### 委托 Token 与当前安全边界
 
@@ -157,7 +186,8 @@ canonical service 是 `10.20.40.44:6789`，`addDelegationTokens("yarn")` 返回 
 7. 应用 `0015` 结束且 PID 已不存在超过 400 秒后，active MDS 会话由基线 8 增至 20；新增
    12 条会话均无 in-flight request、但仍持有 caps。后续 Hive mkdir 被这些已确认死 PID
    session 阻塞时才精确 evict；Hive 失败 JVM 又复现 14 条死 session，成功套件结束仍由
-   长期 NodeManager/JHS 保留 13 条服务 session。E4/SOAK-05 继续保持未达标。
+   长期 NodeManager/JHS 保留 13 条服务 session。Tez `0033` 又在 11 条服务基线上留下两条
+   死 PID session；`yarn logs` 也会创建成组短命客户端。E4/SOAK-05 继续保持未达标。
 8. OSD 恢复后 MON 仍出现间歇选举。三节点 NTP 偏差均小于 0.5 ms、Ceph 集群网 20/20
    ping 无丢包；选举日志显示 `.26/.28` 同时 `lease_timeout`，leader `.44` 有 11 次 Paxos
    `accept_timeout`。`.44` MON RocksDB `submit_sync_latency` 平均约 233 ms，虚拟根盘长期写
@@ -170,6 +200,6 @@ canonical service 是 `10.20.40.44:6789`，`addDelegationTokens("yarn")` 返回 
 
 E3 已完成环境建成、真实发行版 CLI 基础路径、两种 MR 部署形态、committer v1/v2、map
 推测执行、DistributedCache 正确分发、DistCp 双向与 `-update` 负向、YARN 日志聚合、Hive
-4.0.1 Text/ORC/Parquet/分区/DDL-DML 以及 Spark checkpoint/失败恢复。DistributedCache
-跨应用复用、DistCp 其余矩阵、Hive Tez/ACID/授权、Kerberos SP-06B、Spark ORC/提交协议、
+4.0.1 MR/Tez 的 Text/ORC/Parquet/分区/DDL-DML 以及 Spark checkpoint/失败恢复。
+DistributedCache 跨应用复用、DistCp 其余矩阵、Hive ACID/授权、Kerberos SP-06B、Spark ORC/提交协议、
 NM 长跑 session 归零和系统化故障注入仍属于后续 T11/T12 工作。
