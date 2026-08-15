@@ -927,3 +927,22 @@ T11 任务书按新范围重写（新增 §0 前置 spike、8 条验收标准）
   token，因此 Kerberos SP-06B 仍未完成，不能声明安全集群支持。
 - READINESS F 从 35% 上调至 45%，加权总进度约 37% 上调至约 39%；G 保持 20%。下一轮优先
   Tez 0.10.x/Hive、Spark ORC/提交协议或隔离 Kerberized E3/E4，不在现有 E3 原地切换安全模式。
+
+### E3 第四轮 Hive/Tez 与会话生命周期（2026-08-15）
+
+- 安装并校验 Tez 0.10.4。外层二进制包 SHA-512 为
+  `9215244c512e91e1650ba1470c2b2de1ed5ac9e1017f321ec5638c6a33e7fee0dcf616196403d301a0e00e7fa7bc77d9c9a4afac911c723a79e786505fd2e546`；
+  供 YARN 使用的 `share/tez.tar.gz` 为 77,713,127 字节，上传到 HDFS `/e3/tez/`，副本 2。
+- 部署排错确认：必须使用包内 runtime archive；通过
+  `tez.cluster.additional.classpath.prefix` 加入三节点连接器与 `libcephfs.jar`；
+  `CEPH_JNI_PATH` 只能在 AM 层注入一次，否则 task 会得到冒号拼接的伪文件路径。
+  applications `0029`–`0032` 分别留下上述逐层诊断证据。
+- 最终 Tez application `0033` 用约 58 秒完成 6/6 DAG，AM 在 `.26`，任务容器分布于
+  `.26/.28`。Text/ORC/Parquet、动态分区、MSCK、ANALYZE、TRUNCATE 全部与 MR 结果一致；
+  无 `.hive-staging`，仅保留空 `_tez_session_dir` 父目录。错误上传的 93 MB 外层 HDFS
+  archive 已删除。
+- 会话门禁仍未过：作业前服务基线 11，`0033` 成功后为 13，新增两条均属于死 PID；失败
+  应用和一次 `yarn logs` 还会留下成组 session，并使后继 Hive 在 native `lstat` 阻塞约 4 分钟。
+  所有 evict 都只针对已确认退出、0 in-flight 的精确 session ID；活 NM/JHS 未处理。
+- READINESS F 从 45% 上调至 50%，加权总进度约 39% 上调至约 40%；E/C 保持不变。下一轮
+  优先定位 `FileSystem` cache/native mount close 生命周期，再进行 Spark ORC/提交协议矩阵。
