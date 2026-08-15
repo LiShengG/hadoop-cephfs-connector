@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<configuration>
+  <property>
+    <name>tez.lib.uris</name>
+    <value>hdfs://10.20.40.44:8020/e3/tez/tez-0.10.4.tar.gz#tez</value>
+  </property>
+  <property>
+    <name>tez.lib.uris.classpath</name>
+    <value>./tez/*:./tez/lib/*</value>
+  </property>
+  <property>
+    <name>tez.use.cluster.hadoop-libs</name>
+    <value>false</value>
+  </property>
+  <property>
+    <name>tez.cluster.additional.classpath.prefix</name>
+    <value>/opt/hadoop-e3/share/hadoop/common/lib/hadoop-cephfs-1.0.0.jar:/opt/hadoop-e3/share/hadoop/common/lib/libcephfs.jar</value>
+  </property>
+  <property>
+    <name>tez.am.resource.memory.mb</name>
+    <value>1024</value>
+  </property>
+  <property>
+    <name>tez.task.resource.memory.mb</name>
+    <value>1024</value>
+  </property>
+  <property>
+    <name>tez.runtime.io.sort.mb</name>
+    <value>256</value>
+  </property>
+  <property>
+    <name>tez.am.launch.env</name>
+    <value>CEPH_JNI_PATH=/usr/lib/jni/libcephfs_jni.so,LD_LIBRARY_PATH=/usr/lib:/usr/lib/x86_64-linux-gnu:/usr/lib/jni</value>
+  </property>
+</configuration>

@@ -100,7 +100,7 @@ Hadoop 2.x 兼容；`concat` / `truncate` 扩展 API。
 |---|---|---|---|
 | **E1 开发机 vstart** | L0/L1/L2 快速回归、开发自测 | 现状（1 mon/1 mgr/1 mds/1 osd，调试构建） | `scripts/cluster-up.sh`（已有） |
 | **E2 生产仿真 Ceph 集群** | L3/L4/L5/L7 主战场 | ≥ 3 节点：3 mon、2 mgr、3 mds（1 active + 2 standby）、≥ 6 osd（每节点 2）、replicated size=3 min_size=2、public/cluster 网分离、**非调试构建**（无 lockdep）、独立 cephx 用户 | `scripts/env/ceph-cluster-up.sh`（cephadm 或容器编排，T08 交付） |
-| **E3 Hadoop 生态集群** | L6 生态集成 | Hadoop 3.3.6 **发行版**（NN/RM/3×NM）+ Hive 4.0.1 + Spark 3.4；`fs.defaultFS=ceph://` 与 HDFS 共存两种配置 | `scripts/env/hadoop-cluster-up.sh`（T08 交付） |
+| **E3 Hadoop 生态集群** | L6 生态集成 | Hadoop 3.3.6 **发行版**（NN/RM/3×NM）+ Hive 4.0.1 + Tez 0.10.4 + Spark 3.4；`fs.defaultFS=ceph://` 与 HDFS 共存两种配置 | `scripts/env/hadoop-cluster-up.sh`（T08 交付） |
 | **E4 兼容矩阵机** | L6 COMPAT | 可切换 JDK/Hadoop/Ceph 版本的容器镜像集 | `scripts/env/compat-matrix.sh`（T11 交付） |
 
 **环境铁律**
