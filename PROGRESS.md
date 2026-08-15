@@ -812,15 +812,21 @@ T11 任务书按新范围重写（新增 §0 前置 spike、8 条验收标准）
 
 ---
 
-## SP-04 默认端口修复与并发复验 — DONE（2026-08-15）
+## SP-04 默认端口、原子提交与 Spark 复验 — DONE（2026-08-15）
 
 - 根因修复：`CephFs#getUriDefaultPort()` 从 6789 改为 -1，与 authorityless
   `CephFileSystem#getUri()` 的 `ceph:///` 保持一致；MON 列表仍由 `ceph.conf` 提供。
 - 新增 FileContext 专项契约：rename 到不存在目标必须成功；无 OVERWRITE rename 到已存在
   目标必须抛 `FileAlreadyExistsException`，并保持源、目标内容不变。
-- `.26` 验收：122/122 单测通过，`ITestCephFileContext` 由 4 例增至 6 例且 6/6 通过。
-- SP-04B 以 8 线程连续复验 5 轮，每轮均有 2 个成功者（期望恰好 1），其余落败线程还
-  混有通用 `IOException`；确认 `lstat` 与 POSIX rename 分离造成的 TOCTOU 原子性缺陷。
-- 原始证据：`hadoop-cephfs/target/spike-sp04-fix-20260815/`；测试根均由脚本清理。
-- 后续：实现真正的 no-replace 原子 rename；完成前将 Spark checkpoint、Delta/Iceberg
-  原子提交标记为不支持，并在 E3 用真实组件复验。
+- 普通文件 `Rename.NONE` 改用 MDS hard-link 原子抢占目标再 unlink 源；8 线程连续 5 轮及
+  8 个独立 JVM/mount 均严格 1 个成功者，其余为 `FileAlreadyExistsException`。
+- link 后 `halt(77)` 的崩溃注入确认会双名残留；新 JVM可只清理源并保留完整目标。目录
+  不能 hard-link，因此本增强不等价于通用目录原子 rename。
+- 并发 Spark 暴露并修复 `mkdirs` EEXIST 竞态：最终目标为目录时幂等成功，为文件仍失败。
+- `.26` 验收：128/128 单测、mkdir 官方契约 8/8、FileContext 6/6 通过。Spark 3.4.4
+  Structured Streaming 从 batch 0/40 行重启至 batch 1/80 行；双实例竞争时一个成功，
+  另一个正确得到 `SparkConcurrentModificationException`，第三 JVM可继续恢复。
+- 原始证据：`hadoop-cephfs/target/spike-sp04-fix-20260815/`、
+  `hadoop-cephfs/target/spike-sp04-linkfix-20260815/` 与 `hadoop-cephfs/target/spike-spark/`；
+  CephFS 测试根均已清理。
+- 后续：在非 Debug E2/E3 复验，并完成 Spark 其余 9 个生态场景；当前总完成度不调整。

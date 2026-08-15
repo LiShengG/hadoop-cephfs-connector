@@ -30,9 +30,9 @@
 > 单测、140 例契约/集成门控、CLI 200MB md5 往返与发布包构建全部通过。该证据恢复了
 > 可重复执行的 E1 回归底座，但仍属单机 Debug、`client.admin`、size=1 环境，故总评分不变。
 
-> **2026-08-15 SP-04 修复复验**：URI 默认端口统一为 -1，FileContext 专项契约 6/6
-> 通过；SP-04B 连续 5 轮均出现 2 个成功者，确认 no-replace rename 存在 TOCTOU。
-> F0 仍为部分完成，F 维度与总完成度暂不调整。
+> **2026-08-15 SP-04 最终复验**：URI 默认端口与普通文件原子 no-replace 已修复；
+> 128/128 单测、FileContext 6/6、mkdir 契约 8/8 通过。Spark 3.4.4 checkpoint 可重启，
+> 双实例竞争正确失败一个且可恢复。因仍是 E1 Debug/local 模式，F 维度与总完成度暂不调整。
 
 进度条视图：
 
@@ -115,12 +115,12 @@ I 文档        ██████████████░░░░░░  70
 
 | ID | 子项 | 状态 | 要做的事（简述） | 阶段 | 达标判据 |
 |---|---|:--:|---|---|---|
-| F0 | **8 条 spike 证伪** | 🟡 | A 层已在 `.26` 完整执行并形成 [结论](ECO-FINDINGS.md)；SP-04B 与真实组件/Kerberos B 层待 E3 | SPIKE | A+B 层均有结论 |
+| F0 | **8 条 spike 证伪** | 🟡 | A 层已在 `.26` 完整执行；SP-04B 已修复并经真实 Spark local 验证，其余组件/Kerberos B 层待 E3 | SPIKE | A+B 层均有结论 |
 | F1 | 真实 Hadoop 发行版 | ⛔ | 至今所有 CLI 验证都是 `FsShell` 等效方式，需用发行版重做一遍 | T11 | ECO-CLI-01 |
 | F2 | MapReduce | ⛔ | 两种部署形态、committer v1/v2、推测执行、split 本地性、DistributedCache | T11 | ECO-MR 14 条 |
 | F3 | YARN | ⛔ | 日志聚合（走 FileContext）、资源本地化、NM 长跑 mount 累积 | T11 | ECO-YARN 8 条 |
 | F4 | Hive | ⛔ | 建库建表、INSERT OVERWRITE、动态分区、MSCK、ANALYZE、scratchdir 权限 | T11 | ECO-HIVE 14 条 |
-| F5 | Spark | ⛔ | Parquet/ORC、提交协议、**Structured Streaming checkpoint**、event log | T11 | ECO-SPK 10 条 |
+| F5 | Spark | 🟡 | Structured Streaming checkpoint local 模式已通过；Parquet/ORC、提交协议、event log 与 E3 集群仍待验证 | T11 | ECO-SPK 10 条 |
 | F6 | DistCp | ⛔ | 双向 + `-update`（checksum 为 null 会静默跳过校验，须给使用口径） | T11 | ECO-DCP 7 条 |
 | F7 | HBase / Tez / Flink | ⛔ | 评估性，必须给出"支持/受限/不支持"的书面结论 | T11 | 结论进支持矩阵 |
 | F8 | 兼容矩阵 | ⛔ | Hadoop×JDK×Ceph×OS 四维；含 jar 与 so 版本错配的负向用例 | T11 | COMPAT P0 全绿 |
@@ -183,8 +183,8 @@ I 文档        ██████████████░░░░░░  70
    但 C/D/E/F 四个维度（共 55% 权重）仍依赖 E2（3 副本、非 Debug、多 MDS）与 E3
    （Hadoop 发行版集群）。当前尚缺分布式 Ceph 部署、第二网络、`.28` 旧 OSD 处置确认、
    Hadoop/YARN 服务化与环境指纹脚本，完成度仍停在 ~30%。
-2. **当前最高优先级产品缺陷**：SP-04A2 默认端口问题已修复并有契约测试；SP-04B 已确认
-   no-replace rename 存在 TOCTOU，8 线程竞争会有 2 个成功者，需补原子能力后再验证。
+2. **SP-04 风险已收敛**：默认端口、普通文件 no-replace 与并发 mkdirs 均已修复；多 JVM、
+   崩溃恢复和真实 Spark local checkpoint 已通过。剩余边界是目录 rename 与非 Debug E2/E3。
 3. **已触发产品增强**：SP-01/02/03/06A/08B 均成立，需处理 owner/group 名字映射、
    chown 失败语义和安全口径；完成前不得声明多用户 MR/Hive/YARN 或 Kerberos 受支持。
 4. **零成本可做**：I8 版本重定位——挡住"用户按 GA 预期使用"这类最坏误用。
