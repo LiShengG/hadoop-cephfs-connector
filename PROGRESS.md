@@ -883,3 +883,26 @@ T11 任务书按新范围重写（新增 §0 前置 spike、8 条验收标准）
   九维加权进度约 32% 上调到约 35%。
 - 尚未完成：MR committer v1/v2、推测执行、DistributedCache、DistCp、Hive、Kerberos、
   Spark ORC/提交协议矩阵、NM 长跑会话归零、E3 一键重建与 CI/质量门禁。
+
+### E3 第二轮生态扩展（2026-08-15）
+
+- FileOutputCommitter v1（app `0008`）与 v2（`0009`）均成功，结果一致，有 `_SUCCESS` 且
+  无 `_temporary`；推测执行 app `0015` 对 6 个逻辑 map 启动 7 个 attempt、杀死慢 attempt
+  1 个，同一 `slow.txt` 的 attempt0/attempt1 均有聚合日志，输出无重复或丢失。
+- DistributedCache app `0010/0011` 正确本地化同一 CephFS 资源，内容 MD5 一致；MR uploader
+  会复制到每个 job 的 HDFS staging，故尚未证明跨应用 cache key 复用。
+- DistCp HDFS→CephFS（`0012`）与 CephFS→HDFS（`0013`）成功；`-update` app `0014`
+  对等长不同内容报告 `Files Skipped=1` 并保留旧目标，真实确认 SP-07 静默跳过风险。
+- 环境恢复：`.26` OSD.2/3 曾停止，集群降为 4/6；原 BlueStore/LVM 数据完整，启动原 unit
+  后恢复 6/6 和 289 PG clean。收敛期 OSD/MON 抖动导致 CephFS mount timeout；稳定后任务
+  成功，不能据此宣称连接器具备自动重连。
+- MON 继续间歇选举的证据指向 `.44` leader 根盘尾延迟：三节点 NTP <0.5 ms、集群网无丢包，
+  但 RocksDB 同步写平均约 233 ms、累计 11 次 Paxos accept timeout，并见 9.39 秒过期 lease。
+  三 MON 已临时将运行时 `mon_lease` 5→15 秒以稳定 E3（重启失效、故障检测变慢）；调整后
+  122 秒无新增选举且 PG 全 clean，长期仍应把 MON store 迁到低延迟盘。
+- 资源门禁未过：app `0015` JVM 已退出超过 400 秒后，MDS 会话仍从基线 8 增至 20，12 条
+  死 PID 会话仍持 caps；未人工 evict，继续进入 T12 E4/SOAK-05。
+- 交付推测探针 `scripts/spike/java/SpikeMrSpeculation.java` 及更新后的 E3 证据文档。
+  READINESS F 从 25% 上调到 35%，加权总进度约 35% 上调到约 37%；C/E 不调整。
+- 后续：Hive、Kerberos、Spark ORC/提交协议、DistributedCache 跨应用复用、DistCp 余项、
+  NM 24h 会话曲线以及 E3 一键重建/门禁。
