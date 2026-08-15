@@ -261,6 +261,23 @@ public class CephFileSystem extends FileSystem {
     int mode = perm.applyUMask(FsPermission.getUMask(getConf())).toShort();
     try {
       proto.mkdirs(abs, mode);
+    } catch (CephFileAlreadyExistsException raced) {
+      // 另一客户端可能在上面的“不存在”检查后抢先创建了末级目录。
+      // 重新读取最终状态：目录符合 Hadoop mkdirs 幂等契约；若被创建成文件，
+      // 仍必须失败，不能沿用 libcephfs mkdirs 对末级文件静默成功的行为。
+      CephStat racedStat = new CephStat();
+      try {
+        lstatResolved(abs, racedStat, true);
+      } catch (IOException recheckFailure) {
+        raced.addSuppressed(recheckFailure);
+        throw mapCephException(raced, abs);
+      }
+      if (racedStat.isDir()) {
+        return true;
+      }
+      throw (IOException) new FileAlreadyExistsException(
+          "mkdirs: " + abs + " concurrently created as a non-directory")
+          .initCause(raced);
     } catch (IOException e) {
       // 中间级为已存在文件 → CephNotDirectoryException → ParentNotDirectoryException
       throw mapCephException(e, abs);

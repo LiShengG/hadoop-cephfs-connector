@@ -35,7 +35,11 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.io.FileNotFoundException;
+
+import com.ceph.fs.CephFileAlreadyExistsException;
 import com.ceph.fs.CephNotDirectoryException;
+import com.ceph.fs.CephStat;
 
 import org.apache.hadoop.fs.FileAlreadyExistsException;
 import org.apache.hadoop.fs.ParentNotDirectoryException;
@@ -110,6 +114,38 @@ public class TestCephFileSystemMetaMutations {
         .when(proto).mkdirs(eq(d), anyInt());
 
     assertThrows(ParentNotDirectoryException.class,
+        () -> fs.mkdirs(d, FsPermission.getDirDefault()));
+  }
+
+  @Test
+  public void testMkdirsConcurrentDirectoryCreationIsIdempotent() throws Exception {
+    Path d = new Path("/raced-directory");
+    doThrow(new FileNotFoundException(d.toString()))
+        .doAnswer(invocation -> {
+          CephFsTestHelper.copyStat(dirStat(), invocation.getArgument(1));
+          return null;
+        })
+        .when(proto).lstat(eq(d), any(CephStat.class));
+    doThrow(new CephFileAlreadyExistsException("File exists"))
+        .when(proto).mkdirs(eq(d), anyInt());
+
+    assertTrue(fs.mkdirs(d, FsPermission.getDirDefault()));
+    verify(proto).mkdirs(eq(d), anyInt());
+  }
+
+  @Test
+  public void testMkdirsConcurrentFileCreationStillFails() throws Exception {
+    Path d = new Path("/raced-file");
+    doThrow(new FileNotFoundException(d.toString()))
+        .doAnswer(invocation -> {
+          CephFsTestHelper.copyStat(fileStat(), invocation.getArgument(1));
+          return null;
+        })
+        .when(proto).lstat(eq(d), any(CephStat.class));
+    doThrow(new CephFileAlreadyExistsException("File exists"))
+        .when(proto).mkdirs(eq(d), anyInt());
+
+    assertThrows(FileAlreadyExistsException.class,
         () -> fs.mkdirs(d, FsPermission.getDirDefault()));
   }
 
