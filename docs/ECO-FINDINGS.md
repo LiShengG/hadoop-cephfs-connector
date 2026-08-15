@@ -1,8 +1,8 @@
 # Hadoop 生态 spike 实测结论
 
 > 执行日期：2026-08-14；SP-04 E1/E2 与 E3 分布式复验：2026-08-15
-> 环境：E1 `10.20.40.26`；E2/E3 三节点 Release Ceph 16.2.14；Hadoop 3.3.6，Spark 3.4.4，OpenJDK 11
-> 范围：SP-01～SP-08 的 A 层探针；真实 MR/YARN/Spark B 层已部分完成，Kerberos 等仍待验证
+> 环境：E1 `10.20.40.26`；E2/E3 三节点 Release Ceph 16.2.14；Hadoop 3.3.6，Hive 4.0.1，Spark 3.4.4，OpenJDK 11
+> 范围：SP-01～SP-08 的 A 层探针；真实 MR/YARN/Hive/Spark B 层已部分完成，Kerberos SP-06B 等仍待验证
 
 ## 1. 执行与证据
 
@@ -123,12 +123,24 @@ Paxos `accept_timeout` 累计 11 次，日志还记录了 9.39 秒的过期 leas
 会错误继承 HDFS authority，必须使用显式 `ceph://10.20.40.44:6789/...`。完整环境、应用 ID、
 结果和网络限制见 [E3-ENV.md](E3-ENV.md)。
 
+第三轮把 E3 Hive 基线从不兼容 Java 11 的 Hive 3.1.3 调整到 Hive 4.0.1。真实 YARN
+application `0019`–`0028` 全部成功，覆盖外部 TextFile 聚合、ORC 动态分区写入/回读、
+Parquet CTAS、ANALYZE、MSCK 与 TRUNCATE；最终无 `.hive-staging` 残留。Hadoop 的 protobuf
+2.5.0 会遮蔽 Hive protobuf 3.x，必须设置 `mapreduce.job.user.classpath.first=true`。
+Hive 4 严格 managed 规则将本轮表转换为 purge external table，故 ACID/Tez/授权仍未覆盖。
+
+SP-06A 也在真实 E3 以 `hadoope3` 复验：CephFS canonical service 非空但返回 0 个委托 Token；
+三节点使用相同 SHA-256、`0640 root:hadoope3` 且作业用户可读的 keyring。该结果确认当前
+YARN 依赖节点本地共享 cephx 身份。因为当前认证仍是 simple、HDFS 控制组也返回 0，不能据此
+判定 Kerberos 作业行为；SP-06B 仍须隔离的安全集群。
+
 ## 4. 后续门禁
 
 1. E3 分布式 checkpoint 与原子提交后失败恢复已完成；下一步覆盖目录 rename、失败/崩溃后的
    临时源清理。当前结论仅支持普通文件的原子目标发布，不外推到 Delta/Iceberg 全部提交路径。
 2. 明确 owner/group 名字映射与 `setOwner` 失败语义；SP-01/02/03/08B 未解决前，不声明
    MR staging、Hive 多用户或 YARN 日志聚合受支持。
-3. E3 的 MR committer v1/v2、推测执行、资源正确本地化、DistCp 双向与 SP-07 负向已完成；
-   继续 Hive、Kerberos、Spark 格式/提交协议、DistributedCache 跨应用复用和 DistCp 余项。
+3. E3 的 MR committer v1/v2、推测执行、资源正确本地化、DistCp 双向、SP-07 负向以及 Hive
+   MR 基础矩阵已完成；继续 Hive Tez/ACID、Kerberos SP-06B、Spark 格式/提交协议、
+   DistributedCache 跨应用复用和 DistCp 余项。
 4. 将无 checksum、无委托 Token和已打开 reader 长度快照写入支持矩阵与安全边界。

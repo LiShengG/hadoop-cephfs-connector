@@ -6,7 +6,8 @@
 
 **状态：v1.0.0 已发布（2026-07-07，T01–T07 全部完成）。**
 Hadoop FileSystem 契约测试通过，当前 E2 Release 门控为 128/128 单测、142/142 契约与集成；
-E3 已完成真实三节点 Hadoop/YARN、MR 提交/推测、DistCp 和 Spark checkpoint/失败恢复验证。CLI 端到端
+E3 已完成真实三节点 Hadoop/YARN、MR 提交/推测、DistCp、Hive 4 MR 基础矩阵和 Spark
+checkpoint/失败恢复验证。CLI 端到端
 200MB md5 往返一致，部署包一键产出并按文档
 在干净 shell 完成终验（见 PROGRESS.md T07 节）。
 
@@ -22,11 +23,11 @@ E3 已完成真实三节点 Hadoop/YARN、MR 提交/推测、DistCp 和 Spark ch
 | C | 可靠性与恢复 | 15 | **0%** | 0.0 | 15 类故障一条没测；代码无重试无重连 |
 | D | 性能与容量 | 10 | **0%** | 0.0 | 无任何基线，不知道比内核 mount 慢多少 |
 | E | 长稳与资源 | 10 | **5%** | 0.5 | 最长跑过 300 秒 |
-| F | 生态兼容 | 20 | **35%** | 7.0 | E3 MR 提交/推测、DistCp 与资源分发已扩展，Hive/Kerberos 等待补 |
+| F | 生态兼容 | 20 | **45%** | 9.0 | E3 Hive MR 基础矩阵通过；Tez/ACID/Kerberos 与其余组件待补 |
 | G | 安全与多租户 | 8 | **20%** | 1.6 | 身份模型未澄清，安全集群适用性未知 |
 | H | 工程化与门禁 | 7 | **40%** | 2.8 | E2/E3 已建并有只读检查；仍缺一键重建、CI 与质量门禁 |
 | I | 文档与交付 | 5 | **70%** | 3.5 | 部署文档扎实，缺支持矩阵与安全边界 |
-| | **合计** | **100** | | **≈ 37%** | 距 GA 尚远，差的是完整场景、故障与长稳证据 |
+| | **合计** | **100** | | **≈ 39%** | 距 GA 尚远，差的是完整场景、故障与长稳证据 |
 
 ```
 A 功能完整性  ██████████████████░░  92%
@@ -34,7 +35,7 @@ B 语义正确性  █████████████████░░░ 
 C 可靠性      ░░░░░░░░░░░░░░░░░░░░   0%   ← 权重 15，全空
 D 性能        ░░░░░░░░░░░░░░░░░░░░   0%   ← 权重 10，全空
 E 长稳        █░░░░░░░░░░░░░░░░░░░   5%
-F 生态兼容    ███████░░░░░░░░░░░░░  35%   ← MR 提交/推测、DistCp、资源分发已有真实证据
+F 生态兼容    █████████░░░░░░░░░░░  45%   ← 再增加 Hive 4 MR 基础矩阵真实证据
 G 安全        ████░░░░░░░░░░░░░░░░  20%
 H 工程化      ████████░░░░░░░░░░░░  40%
 I 文档        ██████████████░░░░░░  70%
@@ -75,7 +76,7 @@ scripts/make-dist.sh                         # 一键打部署包
 | [docs/TEST-CASES-ECO.md](docs/TEST-CASES-ECO.md) | **Hadoop 生态组件使用场景测试设计**（88 场景 + 8 前置 spike + API 支撑面盘点） | 测试/开发/使用方 |
 | [docs/ECO-FINDINGS.md](docs/ECO-FINDINGS.md) | **ECO spike 实测结论**（`.26` A 层证据、缺陷与后续门禁） | 测试/开发/决策者 |
 | [docs/E2-ENV.md](docs/E2-ENV.md) | **E2 三节点环境指纹**（拓扑、设备白名单、Release 复验与状态检查） | 测试/SRE/开发 |
-| [docs/E3-ENV.md](docs/E3-ENV.md) | **E3 Hadoop/YARN/Spark 环境与真实分布式验证结果** | 测试/SRE/开发 |
+| [docs/E3-ENV.md](docs/E3-ENV.md) | **E3 Hadoop/YARN/Hive/Spark 环境与真实分布式验证结果** | 测试/SRE/开发 |
 | [docs/ENV.md](docs/ENV.md) | 本机开发环境事实（集群、JNI 产物、路径） | 开发者 |
 | [docs/00-顶层架构设计.md](docs/00-顶层架构设计.md) | 总体架构、分层设计、语义映射、配置项、风险清单 | 所有 agent 必读 |
 | [docs/01-协作规范.md](docs/01-协作规范.md) | 多 agent 协作流程、接口冻结规则、进度登记 | 所有 agent 必读 |
@@ -130,10 +131,11 @@ T08 测试基础设施与质量门禁（E2/E3 已建；CI、官方套件待补�
   `size=3/min_size=2`；官方 Ceph 16.2.14 Release 服务端、16.2.15 Release JNI 客户端，
   受限 `client.hadoop` 下 128/128 单测与 142/142 契约/集成通过。详见
   [docs/E2-ENV.md](docs/E2-ENV.md)。
-- 当前 E3：同三节点部署 Hadoop 3.3.6 + Spark 3.4.4；HDFS 3 DataNode、YARN 3
+- 当前 E3：同三节点部署 Hadoop 3.3.6 + Hive 4.0.1 + Spark 3.4.4；HDFS 3 DataNode、YARN 3
   NodeManager，真实 MR 两种部署形态、committer v1/v2 与推测执行通过，DistCp 双向及
-  `-update` 风险已验证，YARN 日志聚合走 CephFS；Spark 三节点 checkpoint 从 batch 0/40 行
-  推进到失败后恢复的 batch 2/120 行。详见 [docs/E3-ENV.md](docs/E3-ENV.md)。
+  `-update` 风险已验证，YARN 日志聚合走 CephFS；Hive Text/ORC/Parquet、动态分区、MSCK、
+  ANALYZE 与 TRUNCATE 通过；Spark 三节点 checkpoint 从 batch 0/40 行推进到失败后恢复的
+  batch 2/120 行。详见 [docs/E3-ENV.md](docs/E3-ENV.md)。
 - 以下为 T01–T07 原始开发机基线，继续保留用于历史结果复现：
 
 - 工作根目录：`/home/lsh/code`

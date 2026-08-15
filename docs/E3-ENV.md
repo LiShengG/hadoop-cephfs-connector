@@ -1,4 +1,4 @@
-# E3 Hadoop/YARN/Spark 三节点环境
+# E3 Hadoop/YARN/Hive/Spark 三节点环境
 
 > 建成及首轮验证日期：2026-08-15。E3 与 [E2-ENV.md](E2-ENV.md) 共用
 > `.44/.26/.28` 三节点和 `cephfs-e2`，用于真实发行版 MR、YARN 与 Spark 分布式验证。
@@ -10,6 +10,7 @@
 | 节点 | `node-44` (`10.20.40.44`)、`node-26` (`10.20.40.26`)、`node-28` (`10.20.40.28`) |
 | Hadoop | Apache Hadoop 3.3.6，`/opt/hadoop-e3` |
 | Spark | Apache Spark 3.4.4，`/opt/spark-e3` |
+| Hive | Apache Hive 4.0.1，`/opt/hive-e3`；embedded Derby 元数据仓库 |
 | Java | OpenJDK 11 |
 | 服务用户 | `hadoope3`，UID/GID 2001 |
 | NameNode / ResourceManager / JHS | `node-44` |
@@ -94,6 +95,45 @@ PID 不存在的旧 session 后，`0007` 约 35 秒完成。这同时给出了 c
 driver 失败后继续恢复的真实分布式证据，但也暴露了 mount 生命周期/会话归零问题，必须在
 T12 SOAK-05 定量验证，不能据此宣称长稳通过。
 
+### Hive 4.0.1 on MapReduce
+
+Hive 3.1.3 的旧 CLI 在 Java 11 上因 `URLClassLoader` 强制转换失败，且其依赖栈与当前
+Hadoop 3.3.6/JDK 11 不匹配。本轮因此把 E3 基线调整为 Hive 4.0.1，保留旧安装在
+`/opt/hive-3.1.3-e3`，系统 Java 仍为 OpenJDK 11。Hive 4 使用 embedded Beeline、Derby
+metastore 和 MR 引擎，配置模板见 [`conf/e3/hive-site.xml`](../conf/e3/hive-site.xml) 与
+[`conf/e3/hive-env.sh`](../conf/e3/hive-env.sh)。
+
+[`scripts/eco/e3-hive-suite.sql`](../scripts/eco/e3-hive-suite.sql) 在真实 YARN 上运行
+application `0019`–`0028`，全部 `FINISHED/SUCCEEDED`：
+
+- 外部 TextFile 聚合得到 `p0=(2,3)`、`p1=(2,7)`、`p2=(2,11)`；
+- ORC 动态分区 `INSERT OVERWRITE` 写入 6 行和 3 个分区，回读聚合完全一致；
+- Parquet CTAS、`ANALYZE TABLE`、`MSCK REPAIR`（发现 `p3/p4`）与 `TRUNCATE TABLE`
+  均成功，truncate 后计数为 0；
+- warehouse、source、scratch、ORC/Parquet 数据及 MR 临时目录均使用显式 authority 的
+  CephFS URI；结束后无 `.hive-staging` 残留。
+
+Hive 4 的 protobuf 3.x 曾被 Hadoop protobuf 2.5.0 抢先加载并触发 `NoSuchMethodError`；套件
+必须设置 `mapreduce.job.user.classpath.first=true`。此外 Hive 4 严格 managed-table 规则会把
+当前建表转换为带 `external.table.purge=TRUE` 的 `EXTERNAL_TABLE`，因此这轮证明的是
+Text/ORC/Parquet、分区与 DDL/DML 路径，不等同于 ACID 表验证。Hive-on-MR 在 Hive 4 中已是
+兼容路径；Tez 仍需单独覆盖。
+
+实验也再次暴露 native mount 生命周期问题：一次失败的 Hive JVM 留下 14 条死 PID MDS
+session，精确确认无请求/caps 使用者后才逐条 evict；最终成功套件结束时 session 从 6 条服务
+基线升至 13 条，新增 7 条均属于仍存活的 NodeManager/JHS。它们不是脏输出，但不满足
+SOAK-05 的会话归零门禁。
+
+### 委托 Token 与当前安全边界
+
+以 `hadoope3` 用户在 E3 运行 `SpikeDelegationToken`：集群为 `simple` 认证，CephFS 的
+canonical service 是 `10.20.40.44:6789`，`addDelegationTokens("yarn")` 返回 0，Credentials
+中也为 0。三节点 `/etc/ceph/ceph.client.hadoop.keyring` 的 SHA-256 均为
+`cf4cdbb740844c4be21bc13df729043e53cde10d3dfdc086511c43c388eaa5f0`，权限均为
+`0640 root:hadoope3`，作业用户可读。这确认当前分布式作业依赖节点本地的同一静态 cephx
+身份，而非 delegation token。HDFS 在 simple 模式下同样不签发 token，不能作为阳性对照；
+只有建成隔离的 Kerberized E3/E4 后，才能完成 SP-06B，当前不得宣称支持 Kerberos 集群。
+
 ## 4. 环境限制与运维注意事项
 
 1. **混合 defaultFS 必须写显式 Ceph authority。** JHS/FileContext 使用 `ceph:///...` 时，
@@ -114,9 +154,10 @@ T12 SOAK-05 定量验证，不能据此宣称长稳通过。
    `active+clean`。重新加入的短暂收敛期内 OSD up/down 与 MON 选举反复发生，CephFS 新挂载
    返回 `Connection timed out`；稳定后同一 MR 成功。这属于 E3 环境/故障恢复证据，停止原因
    尚未归因，不能计为连接器重连通过。
-7. 应用 `0015` 结束且 PID 已不存在超过 400 秒后，active MDS 会话仍由基线 8 增至 20；新增
-   12 条会话均无 in-flight request、但仍持有 caps。没有为得到绿色结果而人工 evict，
-   E4/SOAK-05 继续保持未达标。
+7. 应用 `0015` 结束且 PID 已不存在超过 400 秒后，active MDS 会话由基线 8 增至 20；新增
+   12 条会话均无 in-flight request、但仍持有 caps。后续 Hive mkdir 被这些已确认死 PID
+   session 阻塞时才精确 evict；Hive 失败 JVM 又复现 14 条死 session，成功套件结束仍由
+   长期 NodeManager/JHS 保留 13 条服务 session。E4/SOAK-05 继续保持未达标。
 8. OSD 恢复后 MON 仍出现间歇选举。三节点 NTP 偏差均小于 0.5 ms、Ceph 集群网 20/20
    ping 无丢包；选举日志显示 `.26/.28` 同时 `lease_timeout`，leader `.44` 有 11 次 Paxos
    `accept_timeout`。`.44` MON RocksDB `submit_sync_latency` 平均约 233 ms，虚拟根盘长期写
@@ -128,6 +169,7 @@ T12 SOAK-05 定量验证，不能据此宣称长稳通过。
 ## 5. 尚未覆盖
 
 E3 已完成环境建成、真实发行版 CLI 基础路径、两种 MR 部署形态、committer v1/v2、map
-推测执行、DistributedCache 正确分发、DistCp 双向与 `-update` 负向、YARN 日志聚合及 Spark
-checkpoint/失败恢复。DistributedCache 跨应用复用、DistCp 其余矩阵、Hive、Kerberos、Spark
-ORC/提交协议、NM 长跑 session 归零和系统化故障注入仍属于后续 T11/T12 工作。
+推测执行、DistributedCache 正确分发、DistCp 双向与 `-update` 负向、YARN 日志聚合、Hive
+4.0.1 Text/ORC/Parquet/分区/DDL-DML 以及 Spark checkpoint/失败恢复。DistributedCache
+跨应用复用、DistCp 其余矩阵、Hive Tez/ACID/授权、Kerberos SP-06B、Spark ORC/提交协议、
+NM 长跑 session 归零和系统化故障注入仍属于后续 T11/T12 工作。
