@@ -1,8 +1,8 @@
 # Hadoop 生态 spike 实测结论
 
 > 执行日期：2026-08-14；SP-04 E1/E2 与 E3 分布式复验：2026-08-15
-> 环境：E1 `10.20.40.26`；E2/E3 三节点 Release Ceph 16.2.14；Hadoop 3.3.6，Spark 3.4.4，OpenJDK 11
-> 范围：SP-01～SP-08 的 A 层探针；真实 MR/YARN/Spark B 层已部分完成，Kerberos 等仍待验证
+> 环境：E1 `10.20.40.26`；E2/E3 三节点 Release Ceph 16.2.14；Hadoop 3.3.6，Hive 4.0.1，Spark 3.4.4，OpenJDK 11
+> 范围：SP-01～SP-08 的 A 层探针；真实 MR/YARN/Hive/Spark B 层已部分完成，Kerberos SP-06B 等仍待验证
 
 ## 1. 执行与证据
 
@@ -102,9 +102,37 @@ Spark 在 `.44/.26/.28` 分配 executor。首轮 batch 0/40 行成功；第二�
 ID，从 batch 1 恢复并成功提交 batch 2/120 行。该结果验证了原子提交后 driver 失败的恢复，
 同时把 lingering CephFS session 确认为 E4/SOAK-05 必须量化的问题。
 
+第二轮 E3 扩展通过 FileOutputCommitter v1/v2、真实 map 推测执行、DistributedCache 分发和
+DistCp 双向复制。推测应用 `0015` 对 6 个逻辑 map 启动 7 个 attempt，杀死慢 attempt 1 个；
+同一输入分片的两个 attempt 均有日志证据，最终 CephFS 输出正确且无 `_temporary`。
+DistCp `0014` 进一步把 SP-07 从源码推断升级为真实组件证据：同长度不同内容的目标被
+`-update` 记为 `FILE_SKIPPED`，目标内容未更新。
+
+资源生命周期仍未通过：应用 `0015` 的提交 JVM 已退出超过 400 秒后，active MDS 上新增的
+12 条 client session 仍为 open 并持有 caps。测试期间还真实经历 `.26` 两个 OSD 停止、
+4/6 degraded、MDS/MON 切换与客户端 mount timeout；原 OSD 数据重新激活并稳定 clean 后任务
+成功，但连接器没有在首次 mount 超时后自动恢复。
+
+三节点时钟和集群网排除了明显时钟偏差/丢包；MON leader 的 RocksDB 同步写平均约 233 ms，
+Paxos `accept_timeout` 累计 11 次，日志还记录了 9.39 秒的过期 lease。E3 临时把三 MON 的
+运行时 `mon_lease` 从 5 秒调到 15 秒以容忍虚拟根盘尾延迟，重启即失效；该 workaround 会
+延长故障检测。调整后观察 122 秒无新增选举、PG 全 clean，但不能替代把 MON store 放到
+低延迟盘的环境修复。
+
 混合模式还发现 FileContext 限制：`fs.defaultFS=hdfs://...` 时，JHS 配置中的 `ceph:///...`
 会错误继承 HDFS authority，必须使用显式 `ceph://10.20.40.44:6789/...`。完整环境、应用 ID、
 结果和网络限制见 [E3-ENV.md](E3-ENV.md)。
+
+第三轮把 E3 Hive 基线从不兼容 Java 11 的 Hive 3.1.3 调整到 Hive 4.0.1。真实 YARN
+application `0019`–`0028` 全部成功，覆盖外部 TextFile 聚合、ORC 动态分区写入/回读、
+Parquet CTAS、ANALYZE、MSCK 与 TRUNCATE；最终无 `.hive-staging` 残留。Hadoop 的 protobuf
+2.5.0 会遮蔽 Hive protobuf 3.x，必须设置 `mapreduce.job.user.classpath.first=true`。
+Hive 4 严格 managed 规则将本轮表转换为 purge external table，故 ACID/Tez/授权仍未覆盖。
+
+SP-06A 也在真实 E3 以 `hadoope3` 复验：CephFS canonical service 非空但返回 0 个委托 Token；
+三节点使用相同 SHA-256、`0640 root:hadoope3` 且作业用户可读的 keyring。该结果确认当前
+YARN 依赖节点本地共享 cephx 身份。因为当前认证仍是 simple、HDFS 控制组也返回 0，不能据此
+判定 Kerberos 作业行为；SP-06B 仍须隔离的安全集群。
 
 ## 4. 后续门禁
 
@@ -112,6 +140,7 @@ ID，从 batch 1 恢复并成功提交 batch 2/120 行。该结果验证了原�
    临时源清理。当前结论仅支持普通文件的原子目标发布，不外推到 Delta/Iceberg 全部提交路径。
 2. 明确 owner/group 名字映射与 `setOwner` 失败语义；SP-01/02/03/08B 未解决前，不声明
    MR staging、Hive 多用户或 YARN 日志聚合受支持。
-3. E3 的基础 MR、YARN 日志聚合和 Spark checkpoint 已完成；继续 DistCp、Hive、Kerberos、
-   committer v1/v2、推测执行与资源本地化矩阵。
+3. E3 的 MR committer v1/v2、推测执行、资源正确本地化、DistCp 双向、SP-07 负向以及 Hive
+   MR 基础矩阵已完成；继续 Hive Tez/ACID、Kerberos SP-06B、Spark 格式/提交协议、
+   DistributedCache 跨应用复用和 DistCp 余项。
 4. 将无 checksum、无委托 Token和已打开 reader 长度快照写入支持矩阵与安全边界。

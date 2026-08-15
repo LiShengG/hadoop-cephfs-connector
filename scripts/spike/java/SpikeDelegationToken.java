@@ -39,8 +39,11 @@ public final class SpikeDelegationToken {
     FileSystem fs = base.getFileSystem(conf);
 
     try {
+      String scheme = fs.getUri().getScheme();
       UserGroupInformation ugi = UserGroupInformation.getCurrentUser();
       System.out.println("== 环境 ==");
+      System.out.println("  FileSystem 实现 = " + fs.getClass().getName());
+      System.out.println("  FileSystem URI = " + fs.getUri());
       System.out.println("  hadoop.security.authentication = "
           + conf.get("hadoop.security.authentication", "simple"));
       System.out.println("  UGI 认证方式 = " + ugi.getAuthenticationMethod());
@@ -57,7 +60,11 @@ public final class SpikeDelegationToken {
       System.out.println("  addDelegationTokens(\"yarn\") 返回 " + n + " 个 token");
       System.out.println("  Credentials 内 token 数 = " + creds.numberOfTokens());
 
-      if (n == 0 && creds.numberOfTokens() == 0) {
+      if (!"ceph".equalsIgnoreCase(scheme)) {
+        result("SP-06-CONTROL", "OBSERVED",
+            scheme + " 在当前认证模式下返回 " + n
+                + " 个 token；该控制组不用于判定 CephFS 连接器结论");
+      } else if (n == 0 && creds.numberOfTokens() == 0) {
         result("SP-06A", "CONFIRMED",
             "连接器不提供委托 Token（canonicalServiceName=" + service
                 + "）→ Kerberos 集群中容器无法继承客户端凭据，"

@@ -15,11 +15,11 @@
 | C | 可靠性与恢复 | 15 | **0%** | 0.0 | 15 类故障一条没测；代码无重试无重连 |
 | D | 性能与容量 | 10 | **0%** | 0.0 | 无任何基线，不知道比内核 mount 慢多少 |
 | E | 长稳与资源 | 10 | **5%** | 0.5 | 最长跑过 300 秒 |
-| F | 生态兼容 | 20 | **25%** | 5.0 | E3 基础 MR/YARN/Spark 已通过，Hive/DistCp/Kerberos 与场景矩阵待补 |
+| F | 生态兼容 | 20 | **45%** | 9.0 | E3 Hive MR 基础矩阵通过；Tez/ACID/Kerberos 与其余组件待补 |
 | G | 安全与多租户 | 8 | **20%** | 1.6 | 身份模型未澄清，安全集群适用性未知 |
 | H | 工程化与门禁 | 7 | **40%** | 2.8 | E2/E3 已建并有只读检查；仍缺一键重建、CI 与质量门禁 |
 | I | 文档与交付 | 5 | **70%** | 3.5 | 部署文档扎实，缺支持矩阵与安全边界 |
-| | **合计** | **100** | | **≈ 35%** | 距 GA 尚远，差的是完整场景、故障与长稳证据 |
+| | **合计** | **100** | | **≈ 39%** | 距 GA 尚远，差的是完整场景、故障与长稳证据 |
 
 > 与上一轮口头估算（35–40%）的差异：本表把**生态兼容提到 20% 权重**（它是 P0 阻断项，
 > 一条不过就不能发 GA），可靠性提到 15%，因此初始加权基线约 28%；F0 A 层完成后
@@ -46,6 +46,15 @@
 > batch 0/40 行推进到原子提交后应用失败，再由后继应用以同 query ID 恢复到 batch 2/120 行。
 > 证据与限制见 [E3-ENV.md](E3-ENV.md)。据此上调 F 与 H4，不上调长稳或通用可靠性。
 
+> **2026-08-15 E3 第二轮**：FileOutputCommitter v1/v2、map 推测执行、DistributedCache
+> 正确分发、DistCp 双向及 SP-07 `-update` 负向均取得真实 YARN 证据。应用结束超过 400 秒后 MDS
+> 会话未回到基线，且发生过 Ceph 4/6 OSD 与 mount timeout，故 F 上调至 35%，E/C 不上调。
+
+> **2026-08-15 E3 第三轮**：Hive 基线调整为 4.0.1；真实 YARN application `0019`–`0028`
+> 覆盖 TextFile、ORC 动态分区、Parquet CTAS、ANALYZE、MSCK 与 TRUNCATE，均成功且无 staging
+> 残留。SP-06A 确认 CephFS 不提供 Token、三节点依赖同一静态 keyring，但集群仍为 simple
+> auth，Kerberos SP-06B 未完成。故 F 上调至 45%，G/C/E 不调整。
+
 进度条视图：
 
 ```
@@ -54,7 +63,7 @@ B 语义正确性  █████████████████░░░ 
 C 可靠性      ░░░░░░░░░░░░░░░░░░░░   0%   ← 权重 15，全空
 D 性能        ░░░░░░░░░░░░░░░░░░░░   0%   ← 权重 10，全空
 E 长稳        █░░░░░░░░░░░░░░░░░░░   5%
-F 生态兼容    █████░░░░░░░░░░░░░░░  25%   ← 基础 MR/YARN/Spark 已有真实分布式证据
+F 生态兼容    █████████░░░░░░░░░░░  45%   ← 再增加 Hive 4 MR 基础矩阵真实证据
 G 安全        ████░░░░░░░░░░░░░░░░  20%
 H 工程化      ████████░░░░░░░░░░░░  40%
 I 文档        ██████████████░░░░░░  70%
@@ -127,13 +136,13 @@ I 文档        ██████████████░░░░░░  70
 
 | ID | 子项 | 状态 | 要做的事（简述） | 阶段 | 达标判据 |
 |---|---|:--:|---|---|---|
-| F0 | **8 条 spike 证伪** | 🟡 | A 层已完成；SP-04B 与真实 E3 Spark/MR/YARN B 层部分完成，其余组件/Kerberos 待补 | SPIKE | A+B 层均有结论 |
+| F0 | **8 条 spike 证伪** | 🟡 | A 层已完成；SP-04B 与真实 E3 Spark/MR/YARN/Hive B 层部分完成，Kerberos SP-06B 待补 | SPIKE | A+B 层均有结论 |
 | F1 | 真实 Hadoop 发行版 | 🟡 | Hadoop 3.3.6 E3 已跑 CLI/MR 基础路径，ECO-CLI 全矩阵待补 | T11 | ECO-CLI-01 |
-| F2 | MapReduce | 🟡 | HDFS-default 与 Ceph-default 两种真实 wordcount 通过；committer v1/v2、推测执行、DistributedCache 待补 | T11 | ECO-MR 14 条 |
-| F3 | YARN | 🟡 | 3 NM、CephFS 日志聚合与 JHS 已通过；资源本地化和 NM 长跑 mount 累积待补 | T11 | ECO-YARN 8 条 |
-| F4 | Hive | ⛔ | 建库建表、INSERT OVERWRITE、动态分区、MSCK、ANALYZE、scratchdir 权限 | T11 | ECO-HIVE 14 条 |
+| F2 | MapReduce | 🟡 | 两种 defaultFS、committer v1/v2 和 map 推测执行通过；其余 MR 场景待补 | T11 | ECO-MR 14 条 |
+| F3 | YARN | 🟡 | 3 NM、日志聚合/JHS、资源正确本地化已通过；跨应用 cache 复用和 NM 长跑待补 | T11 | ECO-YARN 8 条 |
+| F4 | Hive | 🟡 | Hive 4.0.1 MR 已通过 Text/ORC/Parquet、动态分区、MSCK、ANALYZE、TRUNCATE；Tez/ACID/授权与规模待补 | T11 | ECO-HIVE 14 条 |
 | F5 | Spark | 🟡 | E3 三节点 checkpoint/Parquet/event log 与失败后恢复已通过；ORC 和提交协议矩阵待补 | T11 | ECO-SPK 10 条 |
-| F6 | DistCp | ⛔ | 双向 + `-update`（checksum 为 null 会静默跳过校验，须给使用口径） | T11 | ECO-DCP 7 条 |
+| F6 | DistCp | 🟡 | 双向复制通过；`-update` 已实证等长不同内容静默跳过，余项与使用口径待补 | T11 | ECO-DCP 7 条 |
 | F7 | HBase / Tez / Flink | ⛔ | 评估性，必须给出"支持/受限/不支持"的书面结论 | T11 | 结论进支持矩阵 |
 | F8 | 兼容矩阵 | ⛔ | Hadoop×JDK×Ceph×OS 四维；含 jar 与 so 版本错配的负向用例 | T11 | COMPAT P0 全绿 |
 | F9 | **《组件支持矩阵》** | ⛔ | 最终对外交付物：每组件标支持/受限/不支持 + 配置示例 | T11 | 发布到 README+DEPLOY |
@@ -144,7 +153,7 @@ I 文档        ██████████████░░░░░░  70
 |---|---|:--:|---|---|---|
 | G1 | cephx 最小权限 | 🟡 | 已知需 `mds rwp`，需扩成完整 caps 矩阵（r / rw / 路径受限 / root_squash） | T12 | SEC-02 矩阵表 |
 | G2 | **身份模型澄清** | ⬜ | 所有请求用同一 cephx id、UGI 不下传 MDS——实测确认并写《安全模型与适用边界》 | T12 | SEC-01 + 文档章节 |
-| G3 | Kerberos 集群适用性 | ⬜ | 无委托 Token → keyring 须分发到所有节点；确认权限边界并写死 | SPIKE→T12 | SP-06 + A-10 |
+| G3 | Kerberos 集群适用性 | 🟡 | E3 simple auth 已确认无 Token 且三节点共享可读 keyring；仍需 Kerberized E3/E4 完成 SP-06B | SPIKE→T12 | SP-06 + A-10 |
 | G4 | 多租户隔离 | ⬜ | 每租户独立 cephx + `ceph.root.dir`，验证越界必失败 | T12 | SEC-03/04 |
 | G5 | 密钥不泄漏 | ⬜ | 对全部测试日志做 grep 断言，0 命中 | T12 | SEC-05 |
 | G6 | 依赖 CVE | ⬜ | 接 OWASP dependency-check 进门禁 | T08 | 无 CVSS≥7 未豁免 |
@@ -181,7 +190,7 @@ I 文档        ██████████████░░░░░░  70
 
 | 里程碑 | A 功能 | B 语义 | C 可靠 | D 性能 | E 长稳 | F 生态 | G 安全 | H 工程 | I 文档 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **当前** | 92 | 85 | 0 | 0 | 5 | 10 | 20 | 30 | 70 |
+| **当前** | 92 | 85 | 0 | 0 | 5 | 45 | 20 | 40 | 70 |
 | Alpha（已达） | 80 | 70 | — | — | — | — | — | — | 50 |
 | **Beta**（T08+T09 后） | 90 | 95 | 80 | 30 | 30 | 40 | 50 | 70 | 70 |
 | **RC**（T10+T11 后） | 95 | 100 | 95 | 90 | 60 | 90 | 70 | 90 | 85 |
@@ -198,7 +207,8 @@ I 文档        ██████████████░░░░░░  70
    崩溃恢复和真实 Spark local checkpoint 已在 E2 Release 通过。失败竞争者会留下临时 metadata
    源文件，需纳入作业/运维清理口径；目录 rename 边界仍待验证。
 3. **已触发产品增强**：SP-01/02/03/06A/08B 均成立，需处理 owner/group 名字映射、
-   chown 失败语义和安全口径；完成前不得声明多用户 MR/Hive/YARN 或 Kerberos 受支持。
+   chown 失败语义和安全口径；Hive 单用户 MR 矩阵虽通过，完成前仍不得声明多用户
+   MR/Hive/YARN 或 Kerberos 受支持。
 4. **零成本可做**：I8 版本重定位——挡住"用户按 GA 预期使用"这类最坏误用。
 
 ---
