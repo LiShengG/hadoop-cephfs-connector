@@ -52,6 +52,7 @@ import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FsServerDefaults;
 import org.apache.hadoop.fs.FsStatus;
+import org.apache.hadoop.fs.Options;
 import org.apache.hadoop.fs.ParentNotDirectoryException;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.PathIsNotEmptyDirectoryException;
@@ -341,6 +342,68 @@ public class CephFileSystem extends FileSystem {
       // children == null：竞态变为文件，落入 unlink
     }
     proto.unlink(p);
+  }
+
+  /**
+   * FileContext 的无覆盖文件 rename 使用 MDS 原子 hard-link 抢占目标，再移除源目录项。
+   * Ceph 16 的 {@code ceph_rename} 没有 RENAME_NOREPLACE 标志，直接使用基类的
+   * “检查后 rename”会留下 TOCTOU 窗口。目录不能创建硬链接，OVERWRITE 也需要真正的
+   * POSIX rename，二者继续走 Hadoop 基类路径。
+   */
+  @Override
+  protected void rename(Path src, Path dst, Options.Rename... options)
+      throws IOException {
+    boolean overwrite = false;
+    if (options != null) {
+      for (Options.Rename option : options) {
+        overwrite |= option == Options.Rename.OVERWRITE;
+      }
+    }
+
+    Path absSrc = makeAbsolute(src);
+    Path absDst = makeAbsolute(dst);
+    FileStatus sourceStatus = getFileLinkStatus(absSrc);
+    if (overwrite || !sourceStatus.isFile() || sourceStatus.isSymlink()) {
+      super.rename(absSrc, absDst, options);
+      return;
+    }
+
+    try {
+      getFileLinkStatus(absDst);
+      throw new FileAlreadyExistsException(
+          "rename destination " + absDst + " already exists.");
+    } catch (FileNotFoundException destinationAbsent) {
+      // link() 将在竞争窗口内原子地再次检查目标不存在。
+    }
+
+    Path parent = absDst.getParent();
+    if (parent != null) {
+      FileStatus parentStatus = getFileStatus(parent);
+      if (!parentStatus.isDirectory()) {
+        throw new ParentNotDirectoryException(
+            "rename destination parent " + parent + " is a file.");
+      }
+    }
+
+    try {
+      proto.link(absSrc, absDst);
+    } catch (CephFileAlreadyExistsException raced) {
+      throw new FileAlreadyExistsException(
+          "rename destination " + absDst + " already exists.");
+    }
+
+    try {
+      proto.unlink(absSrc);
+    } catch (FileNotFoundException alreadyUnlinked) {
+      // link 已成功，源又被并发移除时目标仍是唯一有效目录项，rename 结果可视为成功。
+    } catch (IOException unlinkFailure) {
+      try {
+        proto.unlink(absDst);
+      } catch (IOException rollbackFailure) {
+        unlinkFailure.addSuppressed(rollbackFailure);
+      }
+      throw unlinkFailure;
+    }
   }
 
   @Override

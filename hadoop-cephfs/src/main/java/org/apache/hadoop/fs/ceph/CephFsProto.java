@@ -146,6 +146,16 @@ abstract class CephFsProto {
   abstract void unlink(Path path) throws IOException;
 
   /**
+   * 为普通文件创建硬链接。目标已存在时由 CephFS MDS 原子返回 EEXIST。
+   *
+   * @param existing 已存在的普通文件
+   * @param newName   新目录项
+   * @throws com.ceph.fs.CephFileAlreadyExistsException newName 已存在
+   * @throws IOException 其他错误（目录硬链接返回 EPERM）
+   */
+  abstract void link(Path existing, Path newName) throws IOException;
+
+  /**
    * 重命名/移动。<b>POSIX 语义</b>：dst 为已存在文件时静默覆盖；
    * Hadoop rename 语义修正（返回 false / 移入目录）由 T03 在上层处理。
    *
