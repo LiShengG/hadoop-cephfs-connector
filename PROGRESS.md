@@ -852,5 +852,34 @@ T11 任务书按新范围重写（新增 §0 前置 spike、8 条验收标准）
   第三 JVM恢复全部符合预期，未出现 `boost::bad_get`/abort；失败竞争者残留一个
   `.metadata.<uuid>.tmp`，需纳入已知限制和清理口径。
 - 交付：[docs/E2-ENV.md](docs/E2-ENV.md)、只读基线脚本 `scripts/env/e2-status.sh`。
-- T08 仍未完成：E3、CI/JaCoCo/静态/CVE 门禁、官方 FSMainOperations/FileContext 扩展套件、
-  E2 一键重建脚本仍待后续。
+- T08 仍未完成：CI/JaCoCo/静态/CVE 门禁、官方 FSMainOperations/FileContext 扩展套件、
+  E2/E3 一键重建脚本仍待后续；E3 部署与首轮验证见下一节。
+
+---
+
+## T08/T11 E3 Hadoop/YARN/Spark 分布式验证 — PARTIAL（2026-08-15）
+
+- 在 `.44/.26/.28` 部署 Hadoop 3.3.6、Spark 3.4.4 与 OpenJDK 11；`hadoope3`
+  UID/GID 2001 三节点一致。HDFS 为 1 NN + 3 DN（副本 2），YARN 为 1 RM + 3 NM，JHS
+  位于 `.44`；收尾检查为 3 live DataNode、3 RUNNING NodeManager，NN/RM/JHS 端口均就绪。
+- 当前 HEAD 连接器 jar 三节点 SHA-256 一致：
+  `6a3e308eae3a27b6341c2f3b00fa5316bc1ea512cf55acace65073e65152b874`；容器统一显式配置
+  Release JNI/native 路径与最小权限 `client.hadoop` keyring。
+- 真实 MR 两种形态通过：`application_1786771004480_0002` 使用 HDFS defaultFS + CephFS
+  input/output，AM/reduce 在 `.26`、map 在 `.28`；`...0003` 使用 CephFS defaultFS 与
+  CephFS staging/input/output。两轮均 `SUCCEEDED`、结果正确、有 `_SUCCESS` 且无临时输出。
+- YARN CephFS 日志聚合与 JHS 通过，`yarn logs` 能取回 `.26/.28` 容器日志。修复部署配置：
+  MR AM/map/reduce 必须显式带 `HADOOP_MAPRED_HOME`；混合 HDFS defaultFS 下 JHS/FileContext
+  的 Ceph 路径必须写 `ceph://10.20.40.44:6789/...`，不能写 authorityless `ceph:///...`。
+- Spark 三节点验证：`...0005` batch 0/40 行成功；`...0006` 在旧客户端 caps 回收期间耗尽
+  120 秒而最终 FAILED，但此前已原子提交 batch 1/80 行；清理确认 PID 已退出的 MDS session
+  后，`...0007` 以同 query ID 恢复并成功提交 batch 2/120 行，3 节点均有容器证据。
+- 环境风险：`.26` 曾解析到错误 MAC `9e:c6:13:71:42:aa` 和另一套 SSH key；正确 MAC 为
+  `00:0c:29:dc:2f:46`。`.44` 当前使用 runtime 静态 neighbor workaround，仍需基础设施侧
+  消除重复 IP。Spark JVM 退出后 lingering/stale CephFS session 会造成分钟级 cap 等待，纳入
+  T12 E4/SOAK-05，不计为长稳通过。
+- 交付：[`docs/E3-ENV.md`](docs/E3-ENV.md)、`conf/e3/*.xml`、只读状态脚本
+  `scripts/env/e3-status.sh`。READINESS F 从 10% 上调到 25%，H 从 30% 上调到 40%，
+  九维加权进度约 32% 上调到约 35%。
+- 尚未完成：MR committer v1/v2、推测执行、DistributedCache、DistCp、Hive、Kerberos、
+  Spark ORC/提交协议矩阵、NM 长跑会话归零、E3 一键重建与 CI/质量门禁。

@@ -1,8 +1,8 @@
 # Hadoop 生态 spike 实测结论
 
-> 执行日期：2026-08-14；SP-04 E1/E2 修复复验：2026-08-15
-> 环境：E1 `10.20.40.26`；E2 三节点 Release Ceph 16.2.14；Hadoop 3.3.6，OpenJDK 11.0.27
-> 范围：SP-01～SP-08 的 A 层探针；真实 MR/YARN/Kerberos 组件验证仍待 E3
+> 执行日期：2026-08-14；SP-04 E1/E2 与 E3 分布式复验：2026-08-15
+> 环境：E1 `10.20.40.26`；E2/E3 三节点 Release Ceph 16.2.14；Hadoop 3.3.6，Spark 3.4.4，OpenJDK 11
+> 范围：SP-01～SP-08 的 A 层探针；真实 MR/YARN/Spark B 层已部分完成，Kerberos 等仍待验证
 
 ## 1. 执行与证据
 
@@ -90,11 +90,28 @@ Debug 客户端曾观察到的 `boost::bad_get`/abort。失败竞争者会留下
 - SP-04 日志：`.26:/code/hadoop-cephfs-connector/hadoop-cephfs/target/spike-e2-release/`
 - Spark 日志：`.26:/code/hadoop-cephfs-connector/hadoop-cephfs/target/spike-spark-e2-release/`
 
+### 3.2 E3 Hadoop/YARN/Spark 分布式复验
+
+三节点 Hadoop 3.3.6 E3 运行 HDFS、YARN 和 JHS，CephFS 承载 MR input/output、YARN
+聚合日志、JHS 历史、Spark event log、Parquet sink 与 checkpoint。HDFS-default 和
+Ceph-default 两种 MR wordcount 均成功；YARN 日志可从 CephFS 取回跨节点容器日志。
+
+Spark 在 `.44/.26/.28` 分配 executor。首轮 batch 0/40 行成功；第二轮在 MDS 回收首轮
+已退出 JVM caps 时耗尽 120 秒应用超时，但在最终失败前已完整生成 `offsets/1`、`commits/1`
+与 batch 1 Parquet（80 行）。清理确认 PID 已不存在的旧 session 后，第三应用沿用同一 query
+ID，从 batch 1 恢复并成功提交 batch 2/120 行。该结果验证了原子提交后 driver 失败的恢复，
+同时把 lingering CephFS session 确认为 E4/SOAK-05 必须量化的问题。
+
+混合模式还发现 FileContext 限制：`fs.defaultFS=hdfs://...` 时，JHS 配置中的 `ceph:///...`
+会错误继承 HDFS authority，必须使用显式 `ceph://10.20.40.44:6789/...`。完整环境、应用 ID、
+结果和网络限制见 [E3-ENV.md](E3-ENV.md)。
+
 ## 4. 后续门禁
 
-1. E2 Release checkpoint 已完成；下一步在 E3 分布式 Spark 覆盖目录 rename、失败/崩溃后的
+1. E3 分布式 checkpoint 与原子提交后失败恢复已完成；下一步覆盖目录 rename、失败/崩溃后的
    临时源清理。当前结论仅支持普通文件的原子目标发布，不外推到 Delta/Iceberg 全部提交路径。
 2. 明确 owner/group 名字映射与 `setOwner` 失败语义；SP-01/02/03/08B 未解决前，不声明
    MR staging、Hive 多用户或 YARN 日志聚合受支持。
-3. 在 E3 运行真实 MR 提交、YARN 日志聚合、Spark checkpoint、DistCp 与 Kerberos 容器验证。
+3. E3 的基础 MR、YARN 日志聚合和 Spark checkpoint 已完成；继续 DistCp、Hive、Kerberos、
+   committer v1/v2、推测执行与资源本地化矩阵。
 4. 将无 checksum、无委托 Token和已打开 reader 长度快照写入支持矩阵与安全边界。
