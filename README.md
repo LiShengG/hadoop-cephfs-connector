@@ -110,7 +110,8 @@ T08 测试基础设施与质量门禁（E2/E3 环境、CI、L0 门禁、官方�
 > 写入中文件可见性、`FileContext` 语义、委托 Token** 六处存在生态组件重度依赖、
 > 而冒烟测试打不到的语义偏差。详见 [docs/TEST-CASES-ECO.md](docs/TEST-CASES-ECO.md)。
 > `.26` A 层实测结论见 [docs/ECO-FINDINGS.md](docs/ECO-FINDINGS.md)：已发现
-> `FileContext.rename` 默认端口不一致及多项身份、可见性与安全边界问题。
+> 并修复 `FileContext.rename` 默认端口不一致；进一步确认并发 no-replace rename
+> 存在 TOCTOU，以及多项身份、可见性与安全边界问题。
 
 ## 关键环境事实（开发机）
 

@@ -807,5 +807,20 @@ T11 任务书按新范围重写（新增 §0 前置 spike、8 条验收标准）
   输出完整异常消息并加入有效性基线，避免误判。
 - 收尾检查：`ceph:///` 无 `spike-*` 残留，17/17 PG active+clean；单机 size=1 的
   `HEALTH_WARN` 符合 E1 预期。F 维度由 5% 调至 10%，总完成度由约 28% 调至约 29%。
-- 下一轮：优先修复 SP-04A2 并补 FileContext 契约测试；E3 就绪后完成真实 MR/YARN/
-  Spark/DistCp/Kerberos B 层验证。
+- 后续状态：SP-04A2 与专项契约已于 2026-08-15 完成（见下节）；E3 就绪后完成真实
+  MR/YARN/Spark/DistCp/Kerberos B 层验证。
+
+---
+
+## SP-04 默认端口修复与并发复验 — DONE（2026-08-15）
+
+- 根因修复：`CephFs#getUriDefaultPort()` 从 6789 改为 -1，与 authorityless
+  `CephFileSystem#getUri()` 的 `ceph:///` 保持一致；MON 列表仍由 `ceph.conf` 提供。
+- 新增 FileContext 专项契约：rename 到不存在目标必须成功；无 OVERWRITE rename 到已存在
+  目标必须抛 `FileAlreadyExistsException`，并保持源、目标内容不变。
+- `.26` 验收：122/122 单测通过，`ITestCephFileContext` 由 4 例增至 6 例且 6/6 通过。
+- SP-04B 以 8 线程连续复验 5 轮，每轮均有 2 个成功者（期望恰好 1），其余落败线程还
+  混有通用 `IOException`；确认 `lstat` 与 POSIX rename 分离造成的 TOCTOU 原子性缺陷。
+- 原始证据：`hadoop-cephfs/target/spike-sp04-fix-20260815/`；测试根均由脚本清理。
+- 后续：实现真正的 no-replace 原子 rename；完成前将 Spark checkpoint、Delta/Iceberg
+  原子提交标记为不支持，并在 E3 用真实组件复验。

@@ -39,8 +39,16 @@ import org.apache.hadoop.fs.DelegateToFileSystem;
  */
 public class CephFs extends DelegateToFileSystem {
 
-  /** Ceph monitor 默认端口（ceph://host 缺省端口按此解析）。 */
-  static final int CEPH_DEFAULT_PORT = 6789;
+  /**
+   * CephFS URI 不声明默认端口。
+   *
+   * <p>{@code ceph:///} 的 monitor 列表来自 ceph.conf，并不对应 URI 中的单一
+   * host/port。返回 {@code -1} 也必须与 {@link CephFileSystem#getUri()} 保持一致，
+   * 否则 {@code AbstractFileSystem.checkPath()} 会把无端口路径补成一个正端口，
+   * 再与 {@code ceph:///} 的 {@code -1} 比较，导致正常的 FileContext 操作被误判为
+   * Wrong FS。
+   */
+  static final int CEPH_URI_DEFAULT_PORT = -1;
 
   /**
    * 本构造器签名为
@@ -60,6 +68,6 @@ public class CephFs extends DelegateToFileSystem {
 
   @Override
   public int getUriDefaultPort() {
-    return CEPH_DEFAULT_PORT;
+    return CEPH_URI_DEFAULT_PORT;
   }
 }
