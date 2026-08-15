@@ -19,6 +19,7 @@ package org.apache.hadoop.fs.ceph.contract;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.ceph.CephConfigKeys;
+import org.apache.hadoop.fs.ceph.CephTestConfig;
 import org.apache.hadoop.fs.contract.AbstractBondedFSContract;
 
 /**
@@ -47,15 +48,13 @@ public class CephFSContract extends AbstractBondedFSContract {
   private static final String TEST_FS_KEY = "fs.contract.test.fs.ceph";
   private static final String TEST_FS_URI = "ceph:///";
   private static final String DEFAULT_CEPH_CONF = "/home/lsh/code/ceph/build/ceph.conf";
-  private static final String DEFAULT_AUTH_ID = "admin";
-
   public CephFSContract(Configuration conf) {
     super(conf);
     addConfResource(CONTRACT_XML);
     if (isGateOpen()) {
       conf.set(TEST_FS_KEY, TEST_FS_URI);
       conf.set(CephConfigKeys.CEPH_CONF_FILE_KEY, cephConfFile());
-      conf.set(CephConfigKeys.CEPH_AUTH_ID_KEY, DEFAULT_AUTH_ID);
+      CephTestConfig.applyAuth(conf);
     }
     // 门控关闭：不设置 fs.contract.test.fs.ceph → AbstractBondedFSContract
     // 在 init() 中置 disabled，AbstractFSContractTestBase.setup() 会 skip 全部用例

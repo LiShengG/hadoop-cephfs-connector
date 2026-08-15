@@ -22,6 +22,8 @@
     <ceph.lib.dir>/home/lsh/code/ceph/build/lib</ceph.lib.dir>
     <ceph.jni.dir>${project.basedir}/../dist/native</ceph.jni.dir>
     <test.library.path>${ceph.jni.dir}:${ceph.lib.dir}</test.library.path>
+    <!-- E1 Debug 默认需要；E2 Release 用 -Dceph.test.args= 显式清空。 -->
+    <ceph.test.args>--lockdep=false</ceph.test.args>
   </properties>
 
   <dependencies>
@@ -108,7 +110,7 @@
                  偶发误报锁环并 ceph_abort 拉崩测试 JVM（T06 实测，栈完全在
                  Ceph 内部，与连接器无关；生产构建默认关闭）。经 CEPH_ARGS
                  仅对测试客户端进程覆盖关闭，集群守护进程不受影响。 -->
-            <CEPH_ARGS>--lockdep=false</CEPH_ARGS>
+            <CEPH_ARGS>${ceph.test.args}</CEPH_ARGS>
           </environmentVariables>
         </configuration>
         <executions>

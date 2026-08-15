@@ -217,6 +217,11 @@ class CephTalker extends CephFsProto {
   }
 
   @Override
+  void link(Path existing, Path newName) throws IOException {
+    mnt().link(pathString(existing), pathString(newName));
+  }
+
+  @Override
   void rename(Path src, Path dst) throws IOException {
     mnt().rename(pathString(src), pathString(dst));
   }

@@ -47,8 +47,11 @@ HADOOP_HOME=/opt/hadoop-3.3.6 scripts/spike/sp01b-mr-submit.sh   # 真实 MR 提
 scripts/spike/sp06-kerberos.sh                                    # 文末附 Kerberos 清单
 ```
 
-环境变量：`CEPH_BUILD`、`CEPH_CONF_FILE`、`CEPH_AUTH_ID`、`SPIKE_OUT_DIR`、
-`SPIKE_ALIEN_UID`、`SPIKE_RENAME_THREADS`、`SPIKE_CHUNK_BYTES`。
+环境变量：`CEPH_BUILD`、`CEPH_CONF_FILE`、`CEPH_LIB_DIR`、`CEPH_JNI_DIR`、
+`CEPH_AUTH_ID`、`CEPH_AUTH_KEYRING`、`CEPH_ARGS`、`SPIKE_OUT_DIR`、
+`SPIKE_ALIEN_UID`、`SPIKE_RENAME_THREADS`、`SPIKE_CHUNK_BYTES`。E1 Debug 未设置
+`CEPH_ARGS` 时默认使用 `--lockdep=false`；E2 Release 可传空值 `CEPH_ARGS=`，并将
+lib/JNI/keyring 三个路径指向发行版客户端与受限 cephx 身份。
 
 ## 产出
 

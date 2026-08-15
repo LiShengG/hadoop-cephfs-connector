@@ -17,6 +17,9 @@
  */
 package org.apache.hadoop.fs.ceph;
 
+import java.io.FileNotFoundException;
+import java.io.IOException;
+
 import static org.apache.hadoop.fs.ceph.CephFsTestHelper.dirStat;
 import static org.apache.hadoop.fs.ceph.CephFsTestHelper.fileStat;
 import static org.apache.hadoop.fs.ceph.CephFsTestHelper.mockLstat;
@@ -26,10 +29,15 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import com.ceph.fs.CephFileAlreadyExistsException;
+
+import org.apache.hadoop.fs.FileAlreadyExistsException;
+import org.apache.hadoop.fs.Options;
 import org.apache.hadoop.fs.Path;
 import org.junit.After;
 import org.junit.Before;
@@ -57,6 +65,62 @@ public class TestCephFileSystemMetaRename {
 
   private void verifyNoRename() throws Exception {
     verify(proto, never()).rename(any(Path.class), any(Path.class));
+  }
+
+  /** SP-04B：FileContext NONE rename 的普通文件走原子 link + unlink。 */
+  @Test
+  public void testNoOverwriteFileRenameUsesLinkThenUnlink() throws Exception {
+    mockLstat(proto, new Path("/src"), fileStat());
+    mockLstatMissing(proto, new Path("/dst"));
+    mockLstat(proto, new Path("/"), dirStat());
+
+    fs.rename(new Path("/src"), new Path("/dst"), Options.Rename.NONE);
+
+    verify(proto).link(eq(new Path("/src")), eq(new Path("/dst")));
+    verify(proto).unlink(eq(new Path("/src")));
+    verifyNoRename();
+  }
+
+  /** SP-04B：link 原子竞争的落败方映射为 Hadoop FileAlreadyExistsException。 */
+  @Test(expected = FileAlreadyExistsException.class)
+  public void testNoOverwriteFileRenameMapsAtomicLinkConflict() throws Exception {
+    mockLstat(proto, new Path("/src"), fileStat());
+    mockLstatMissing(proto, new Path("/dst"));
+    mockLstat(proto, new Path("/"), dirStat());
+    doThrow(new CephFileAlreadyExistsException("File exists"))
+        .when(proto).link(new Path("/src"), new Path("/dst"));
+
+    fs.rename(new Path("/src"), new Path("/dst"), Options.Rename.NONE);
+  }
+
+  /** link 成功后源已被并发移除，目标已提交，不应再回滚。 */
+  @Test
+  public void testNoOverwriteFileRenameAcceptsConcurrentSourceRemoval() throws Exception {
+    mockLstat(proto, new Path("/src"), fileStat());
+    mockLstatMissing(proto, new Path("/dst"));
+    mockLstat(proto, new Path("/"), dirStat());
+    doThrow(new FileNotFoundException("gone"))
+        .when(proto).unlink(new Path("/src"));
+
+    fs.rename(new Path("/src"), new Path("/dst"), Options.Rename.NONE);
+
+    verify(proto, never()).unlink(new Path("/dst"));
+  }
+
+  /** link 后移除源失败时回滚新目标，避免向调用方暴露半提交结果。 */
+  @Test(expected = IOException.class)
+  public void testNoOverwriteFileRenameRollsBackFailedSourceUnlink() throws Exception {
+    mockLstat(proto, new Path("/src"), fileStat());
+    mockLstatMissing(proto, new Path("/dst"));
+    mockLstat(proto, new Path("/"), dirStat());
+    doThrow(new IOException("unlink failed"))
+        .when(proto).unlink(new Path("/src"));
+
+    try {
+      fs.rename(new Path("/src"), new Path("/dst"), Options.Rename.NONE);
+    } finally {
+      verify(proto).unlink(new Path("/dst"));
+    }
   }
 
   /** §4-1：src 不存在 → false。 */

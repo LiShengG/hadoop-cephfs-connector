@@ -62,8 +62,6 @@ import org.junit.Test;
 public class ITestCephTalker {
 
   private static final String DEFAULT_CEPH_CONF = "/home/lsh/code/ceph/build/ceph.conf";
-  private static final String DEFAULT_AUTH_ID = "admin";
-
   private CephTalker talker;
   private Path testDir;
 
@@ -83,7 +81,7 @@ public class ITestCephTalker {
 
     Configuration conf = new Configuration(false);
     conf.set(CephConfigKeys.CEPH_CONF_FILE_KEY, cephConfFile());
-    conf.set(CephConfigKeys.CEPH_AUTH_ID_KEY, DEFAULT_AUTH_ID);
+    CephTestConfig.applyAuth(conf);
 
     talker = new CephTalker();
     // URI 无 authority：mon 地址完全来自 ceph.conf（ENV.md §1，勿硬编码）
@@ -303,7 +301,7 @@ public class ITestCephTalker {
   public void testDoubleInitializeRejected() throws Exception {
     Configuration conf = new Configuration(false);
     conf.set(CephConfigKeys.CEPH_CONF_FILE_KEY, cephConfFile());
-    conf.set(CephConfigKeys.CEPH_AUTH_ID_KEY, DEFAULT_AUTH_ID);
+    CephTestConfig.applyAuth(conf);
     try {
       talker.initialize(URI.create("ceph:///"), conf);
       fail("expected IllegalStateException on double initialize");

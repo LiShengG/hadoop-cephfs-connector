@@ -807,5 +807,79 @@ T11 任务书按新范围重写（新增 §0 前置 spike、8 条验收标准）
   输出完整异常消息并加入有效性基线，避免误判。
 - 收尾检查：`ceph:///` 无 `spike-*` 残留，17/17 PG active+clean；单机 size=1 的
   `HEALTH_WARN` 符合 E1 预期。F 维度由 5% 调至 10%，总完成度由约 28% 调至约 29%。
-- 下一轮：优先修复 SP-04A2 并补 FileContext 契约测试；E3 就绪后完成真实 MR/YARN/
-  Spark/DistCp/Kerberos B 层验证。
+- 后续状态：SP-04A2 与专项契约已于 2026-08-15 完成（见下节）；E3 就绪后完成真实
+  MR/YARN/Spark/DistCp/Kerberos B 层验证。
+
+---
+
+## SP-04 默认端口、原子提交与 Spark 复验 — DONE（2026-08-15）
+
+- 根因修复：`CephFs#getUriDefaultPort()` 从 6789 改为 -1，与 authorityless
+  `CephFileSystem#getUri()` 的 `ceph:///` 保持一致；MON 列表仍由 `ceph.conf` 提供。
+- 新增 FileContext 专项契约：rename 到不存在目标必须成功；无 OVERWRITE rename 到已存在
+  目标必须抛 `FileAlreadyExistsException`，并保持源、目标内容不变。
+- 普通文件 `Rename.NONE` 改用 MDS hard-link 原子抢占目标再 unlink 源；8 线程连续 5 轮及
+  8 个独立 JVM/mount 均严格 1 个成功者，其余为 `FileAlreadyExistsException`。
+- link 后 `halt(77)` 的崩溃注入确认会双名残留；新 JVM可只清理源并保留完整目标。目录
+  不能 hard-link，因此本增强不等价于通用目录原子 rename。
+- 并发 Spark 暴露并修复 `mkdirs` EEXIST 竞态：最终目标为目录时幂等成功，为文件仍失败。
+- `.26` 验收：128/128 单测、mkdir 官方契约 8/8、FileContext 6/6 通过。Spark 3.4.4
+  Structured Streaming 从 batch 0/40 行重启至 batch 1/80 行；双实例竞争时一个成功，
+  另一个正确得到 `SparkConcurrentModificationException`，第三 JVM可继续恢复。
+- 原始证据：`hadoop-cephfs/target/spike-sp04-fix-20260815/`、
+  `hadoop-cephfs/target/spike-sp04-linkfix-20260815/` 与 `hadoop-cephfs/target/spike-spark/`；
+  CephFS 测试根均已清理。
+- 后续：在非 Debug E2/E3 复验，并完成 Spark 其余 9 个生态场景；当前总完成度不调整。
+
+---
+
+## T08 E2 三节点生产仿真底座与 Release 复验 — PARTIAL（2026-08-15）
+
+- 建成 Cephadm E2：`.44/.26/.28`，Ceph 16.2.14 官方 Release 容器，3 MON、2 MGR、
+  6 OSD、3 MDS，public/cluster 双网络，`cephfs-e2` 两池均 `size=3/min_size=2`；最终
+  `HEALTH_OK`、289/289 PG active+clean。
+- 仅使用白名单空盘：`.44 sdb/sdc`、`.26 sdc/sdd`、`.28 sdd/sdg`；`.28` 四块旧
+  BlueStore 盘未触碰。`.26` E1 vstart 已停止但数据保留。
+- NTP 与网络环境已修复：`.44/.28` 从失效的 `10.20.40.31` 改为已验证公网源；三节点
+  `ens224` 持久配置为 `172.30.40.0/24`。两台错误类型的 `/var/log/ceph` 普通文件均已
+  改名备份后恢复为目录。
+- 创建最小权限 `client.hadoop`（mon r / mds rwp / osd rw，仅限 `cephfs-e2`）；测试夹具
+  新增 `CEPH_AUTH_ID/CEPH_AUTH_KEYRING` 覆盖，不再要求硬编码 admin。
+- Release 客户端为 Pacific 16.2.15 官方包，运行时强制 `/usr/lib`，避免命中
+  `/usr/local/lib` 旧 Debug 库；空 `CEPH_ARGS` 下 128/128 单测、142/142 契约+集成通过。
+  BlockLocation 三副本地址真实返回 `.26/.28/.44`。
+- SP-04B Release 连续 5 轮全为 1 成功 + 7 EEXIST。Spark 3.4.4 顺序重启、双实例竞争与
+  第三 JVM恢复全部符合预期，未出现 `boost::bad_get`/abort；失败竞争者残留一个
+  `.metadata.<uuid>.tmp`，需纳入已知限制和清理口径。
+- 交付：[docs/E2-ENV.md](docs/E2-ENV.md)、只读基线脚本 `scripts/env/e2-status.sh`。
+- T08 仍未完成：CI/JaCoCo/静态/CVE 门禁、官方 FSMainOperations/FileContext 扩展套件、
+  E2/E3 一键重建脚本仍待后续；E3 部署与首轮验证见下一节。
+
+---
+
+## T08/T11 E3 Hadoop/YARN/Spark 分布式验证 — PARTIAL（2026-08-15）
+
+- 在 `.44/.26/.28` 部署 Hadoop 3.3.6、Spark 3.4.4 与 OpenJDK 11；`hadoope3`
+  UID/GID 2001 三节点一致。HDFS 为 1 NN + 3 DN（副本 2），YARN 为 1 RM + 3 NM，JHS
+  位于 `.44`；收尾检查为 3 live DataNode、3 RUNNING NodeManager，NN/RM/JHS 端口均就绪。
+- 当前 HEAD 连接器 jar 三节点 SHA-256 一致：
+  `6a3e308eae3a27b6341c2f3b00fa5316bc1ea512cf55acace65073e65152b874`；容器统一显式配置
+  Release JNI/native 路径与最小权限 `client.hadoop` keyring。
+- 真实 MR 两种形态通过：`application_1786771004480_0002` 使用 HDFS defaultFS + CephFS
+  input/output，AM/reduce 在 `.26`、map 在 `.28`；`...0003` 使用 CephFS defaultFS 与
+  CephFS staging/input/output。两轮均 `SUCCEEDED`、结果正确、有 `_SUCCESS` 且无临时输出。
+- YARN CephFS 日志聚合与 JHS 通过，`yarn logs` 能取回 `.26/.28` 容器日志。修复部署配置：
+  MR AM/map/reduce 必须显式带 `HADOOP_MAPRED_HOME`；混合 HDFS defaultFS 下 JHS/FileContext
+  的 Ceph 路径必须写 `ceph://10.20.40.44:6789/...`，不能写 authorityless `ceph:///...`。
+- Spark 三节点验证：`...0005` batch 0/40 行成功；`...0006` 在旧客户端 caps 回收期间耗尽
+  120 秒而最终 FAILED，但此前已原子提交 batch 1/80 行；清理确认 PID 已退出的 MDS session
+  后，`...0007` 以同 query ID 恢复并成功提交 batch 2/120 行，3 节点均有容器证据。
+- 环境风险：`.26` 曾解析到错误 MAC `9e:c6:13:71:42:aa` 和另一套 SSH key；正确 MAC 为
+  `00:0c:29:dc:2f:46`。`.44` 当前使用 runtime 静态 neighbor workaround，仍需基础设施侧
+  消除重复 IP。Spark JVM 退出后 lingering/stale CephFS session 会造成分钟级 cap 等待，纳入
+  T12 E4/SOAK-05，不计为长稳通过。
+- 交付：[`docs/E3-ENV.md`](docs/E3-ENV.md)、`conf/e3/*.xml`、只读状态脚本
+  `scripts/env/e3-status.sh`。READINESS F 从 10% 上调到 25%，H 从 30% 上调到 40%，
+  九维加权进度约 32% 上调到约 35%。
+- 尚未完成：MR committer v1/v2、推测执行、DistributedCache、DistCp、Hive、Kerberos、
+  Spark ORC/提交协议矩阵、NM 长跑会话归零、E3 一键重建与 CI/质量门禁。

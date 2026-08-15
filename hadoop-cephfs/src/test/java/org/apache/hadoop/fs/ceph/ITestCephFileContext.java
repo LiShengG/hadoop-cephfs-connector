@@ -32,6 +32,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.CreateFlag;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FileAlreadyExistsException;
 import org.apache.hadoop.fs.FileContext;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FsStatus;
@@ -57,8 +58,6 @@ import org.junit.Test;
 public class ITestCephFileContext {
 
   private static final String DEFAULT_CEPH_CONF = "/home/lsh/code/ceph/build/ceph.conf";
-  private static final String DEFAULT_AUTH_ID = "admin";
-
   private Configuration conf;
   private FileContext fc;
   private Path base;
@@ -75,7 +74,7 @@ public class ITestCephFileContext {
   private Configuration newConf(boolean withAbstractFsImpl) {
     Configuration c = new Configuration();
     c.set(CephConfigKeys.CEPH_CONF_FILE_KEY, cephConfFile());
-    c.set(CephConfigKeys.CEPH_AUTH_ID_KEY, DEFAULT_AUTH_ID);
+    CephTestConfig.applyAuth(c);
     if (withAbstractFsImpl) {
       // T05 验收标准 3：fs.AbstractFileSystem.ceph.impl 配置生效
       c.set(CephConfigKeys.FS_ABSTRACTFILESYSTEM_CEPH_IMPL_KEY,
@@ -166,6 +165,49 @@ public class ITestCephFileContext {
     assertEquals(0, fc.util().listStatus(base).length);
   }
 
+  /**
+   * 回归 SP-04A2：authorityless ceph:/// 的普通 rename 不得因默认端口不一致
+   * 被 AbstractFileSystem.checkPath() 判为 Wrong FS。
+   */
+  @Test
+  public void testRenameToAbsentDestination() throws Exception {
+    Path source = new Path(base, "rename-absent-source");
+    Path destination = new Path(base, "rename-absent-destination");
+    byte[] payload = "rename-to-absent".getBytes(StandardCharsets.UTF_8);
+
+    write(source, payload);
+    fc.rename(source, destination);
+
+    assertFalse("source must disappear after rename", fc.util().exists(source));
+    assertTrue("destination must exist after rename", fc.util().exists(destination));
+    assertArrayEquals(payload, read(destination, payload.length));
+  }
+
+  /**
+   * 回归 SP-04A：不带 OVERWRITE 的 rename 必须拒绝已存在目标，并完整保留两端内容。
+   */
+  @Test
+  public void testRenameWithoutOverwriteRejectsExistingDestination() throws Exception {
+    Path source = new Path(base, "rename-existing-source");
+    Path destination = new Path(base, "rename-existing-destination");
+    byte[] sourcePayload = "source-content".getBytes(StandardCharsets.UTF_8);
+    byte[] destinationPayload = "destination-content".getBytes(StandardCharsets.UTF_8);
+
+    write(source, sourcePayload);
+    write(destination, destinationPayload);
+
+    try {
+      fc.rename(source, destination);
+      fail("rename without OVERWRITE must reject an existing destination");
+    } catch (FileAlreadyExistsException expected) {
+      // FileContext/AbstractFileSystem 的无覆盖契约。
+    }
+
+    assertArrayEquals(sourcePayload, read(source, sourcePayload.length));
+    assertArrayEquals(destinationPayload,
+        read(destination, destinationPayload.length));
+  }
+
   @Test
   public void testFsStatusThroughFileContext() throws Exception {
     // getStatus 经 DelegateToFileSystem.getFsStatus 委托到 CephFileSystem.getStatus
@@ -181,5 +223,21 @@ public class ITestCephFileContext {
     // 的绝对路径即证明默认 FS 为 CephFs 委托的 CephFileSystem
     Path qualified = fc.makeQualified(new Path("relative-t05"));
     assertEquals("ceph", qualified.toUri().getScheme());
+  }
+
+  private void write(Path path, byte[] payload) throws IOException {
+    try (FSDataOutputStream out = fc.create(path,
+        EnumSet.of(CreateFlag.CREATE),
+        Options.CreateOpts.perms(FsPermission.getFileDefault()))) {
+      out.write(payload);
+    }
+  }
+
+  private byte[] read(Path path, int length) throws IOException {
+    byte[] payload = new byte[length];
+    try (FSDataInputStream in = fc.open(path)) {
+      in.readFully(0, payload);
+    }
+    return payload;
   }
 }

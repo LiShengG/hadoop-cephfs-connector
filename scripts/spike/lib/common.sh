@@ -19,9 +19,10 @@ MVN_PROJ="$PROJ_ROOT/hadoop-cephfs"
 
 CEPH_BUILD="${CEPH_BUILD:-/home/lsh/code/ceph/build}"
 CEPH_CONF="${CEPH_CONF_FILE:-$CEPH_BUILD/ceph.conf}"
-CEPH_LIB_DIR="$CEPH_BUILD/lib"
-JNI_DIR="$PROJ_ROOT/dist/native"
+CEPH_LIB_DIR="${CEPH_LIB_DIR:-$CEPH_BUILD/lib}"
+JNI_DIR="${CEPH_JNI_DIR:-$PROJ_ROOT/dist/native}"
 CEPH_AUTH_ID="${CEPH_AUTH_ID:-admin}"
+CEPH_AUTH_KEYRING="${CEPH_AUTH_KEYRING:-}"
 
 OUT_DIR="${SPIKE_OUT_DIR:-$MVN_PROJ/target/spike}"
 CLASSES_DIR="$OUT_DIR/classes"
@@ -75,6 +76,10 @@ setup_runtime() {
 
   CONF_DIR="$OUT_DIR/conf"
   mkdir -p "$CONF_DIR"
+  local keyring_property=""
+  if [ -n "$CEPH_AUTH_KEYRING" ]; then
+    keyring_property="  <property><name>ceph.auth.keyring</name><value>$CEPH_AUTH_KEYRING</value></property>"
+  fi
   cat > "$CONF_DIR/core-site.xml" <<EOF
 <?xml version="1.0"?>
 <configuration>
@@ -83,13 +88,19 @@ setup_runtime() {
   <property><name>fs.AbstractFileSystem.ceph.impl</name><value>org.apache.hadoop.fs.ceph.CephFs</value></property>
   <property><name>ceph.conf.file</name><value>$CEPH_CONF</value></property>
   <property><name>ceph.auth.id</name><value>$CEPH_AUTH_ID</value></property>
+$keyring_property
 </configuration>
 EOF
 
   CP="$CONF_DIR:$CLASSES_DIR:$connector_jar:$(cat "$cp_file")"
   export LD_LIBRARY_PATH="$CEPH_LIB_DIR:${LD_LIBRARY_PATH:-}"
-  # vstart 调试构建规避 lockdep 误报（同 pom failsafe 注释与 e2e 脚本）
-  export CEPH_ARGS="${CEPH_ARGS:---lockdep=false}"
+  # vstart 调试构建默认规避 lockdep 误报；E2 Release 验证可显式传
+  # `CEPH_ARGS=`，证明无需该 workaround。
+  if [ -z "${CEPH_ARGS+x}" ]; then
+    export CEPH_ARGS="--lockdep=false"
+  else
+    export CEPH_ARGS
+  fi
 }
 
 compile_probes() {
@@ -101,9 +112,19 @@ compile_probes() {
   fi
   log "编译 Java 探针..."
   mkdir -p "$CLASSES_DIR"
+  local sources=()
+  local source
+  for source in "$SPIKE_DIR"/java/*.java; do
+    # Spark 探针由真实 Spark 流程使用 Spark 自身 jars 单独编译；把它放进
+    # Hadoop-only 的公共 classpath 会导致所有非 Spark spike 都无法启动。
+    if [ "$(basename "$source")" = "SpikeSparkCheckpoint.java" ]; then
+      continue
+    fi
+    sources+=("$source")
+  done
   # -encoding UTF-8 必须显式指定：探针源码含中文，POSIX locale 下 javac
   # 会按 ANSI_X3.4-1968 解析并把字符串字面量编成乱码（实测踩过）
-  javac -nowarn -encoding UTF-8 -cp "$CP" -d "$CLASSES_DIR" "$SPIKE_DIR"/java/*.java \
+  javac -nowarn -encoding UTF-8 -cp "$CP" -d "$CLASSES_DIR" "${sources[@]}" \
     || die "探针编译失败"
   touch "$marker"
 }

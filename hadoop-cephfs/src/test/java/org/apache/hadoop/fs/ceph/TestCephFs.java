@@ -55,7 +55,8 @@ public class TestCephFs {
   }
 
   @Test
-  public void testDefaultPortConstant() {
-    assertEquals("Ceph monitor 默认端口", 6789, CephFs.CEPH_DEFAULT_PORT);
+  public void testUriHasNoDefaultPort() {
+    assertEquals("ceph:/// 从 ceph.conf 读取 MON，不应声明 URI 默认端口",
+        -1, CephFs.CEPH_URI_DEFAULT_PORT);
   }
 }

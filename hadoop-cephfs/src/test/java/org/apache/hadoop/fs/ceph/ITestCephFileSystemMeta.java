@@ -58,8 +58,6 @@ import org.junit.Test;
 public class ITestCephFileSystemMeta {
 
   private static final String DEFAULT_CEPH_CONF = "/home/lsh/code/ceph/build/ceph.conf";
-  private static final String DEFAULT_AUTH_ID = "admin";
-
   private Configuration conf;
   private FileSystem fs;
   private CephTalker talker; // 辅助 mount：仅用于创建测试文件（T04 前无 create）
@@ -81,7 +79,7 @@ public class ITestCephFileSystemMeta {
 
     conf = new Configuration();
     conf.set(CephConfigKeys.CEPH_CONF_FILE_KEY, cephConfFile());
-    conf.set(CephConfigKeys.CEPH_AUTH_ID_KEY, DEFAULT_AUTH_ID);
+    CephTestConfig.applyAuth(conf);
     // 各用例独立实例，避免跨用例共享已 close 的缓存实例
     conf.setBoolean("fs.ceph.impl.disable.cache", true);
 
@@ -91,7 +89,7 @@ public class ITestCephFileSystemMeta {
     talker = new CephTalker();
     Configuration talkerConf = new Configuration(false);
     talkerConf.set(CephConfigKeys.CEPH_CONF_FILE_KEY, cephConfFile());
-    talkerConf.set(CephConfigKeys.CEPH_AUTH_ID_KEY, DEFAULT_AUTH_ID);
+    CephTestConfig.applyAuth(talkerConf);
     talker.initialize(URI.create("ceph:///"), talkerConf);
 
     base = new Path("/itest-t03-" + System.nanoTime());

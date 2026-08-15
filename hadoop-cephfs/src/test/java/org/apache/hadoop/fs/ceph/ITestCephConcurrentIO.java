@@ -53,8 +53,6 @@ import org.junit.Test;
 public class ITestCephConcurrentIO {
 
   private static final String DEFAULT_CEPH_CONF = "/home/lsh/code/ceph/build/ceph.conf";
-  private static final String DEFAULT_AUTH_ID = "admin";
-
   private static final int THREADS = 4;
   private static final int FILE_SIZE = 8 * 1024 * 1024; // 8MB / 线程
   private static final int TIMEOUT_SECONDS = 300;       // 死锁兜底
@@ -78,7 +76,7 @@ public class ITestCephConcurrentIO {
 
     Configuration conf = new Configuration();
     conf.set(CephConfigKeys.CEPH_CONF_FILE_KEY, cephConfFile());
-    conf.set(CephConfigKeys.CEPH_AUTH_ID_KEY, DEFAULT_AUTH_ID);
+    CephTestConfig.applyAuth(conf);
     conf.setBoolean("fs.ceph.impl.disable.cache", true);
     fs = FileSystem.get(URI.create("ceph:///"), conf);
     base = new Path("/itest-t06-concurrent-" + System.nanoTime());
