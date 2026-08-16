@@ -32,6 +32,15 @@
 - Record test executions in `docs/reports/`.
 - Do not copy complete historical text into the archive.
 
+## Experiment journal
+
+- After each experiment, append a concise entry to `EXPERIMENTS.md` immediately above its stable
+  append marker using `apply_patch`.
+- Do not read earlier journal entries merely to append a new one. Read them only when the active task
+  explicitly requires historical comparison or analysis.
+- The journal is an operational log. Release-gate evidence still requires the dated report defined
+  by `docs/TESTING.md`.
+
 ## Verification
 
 - Run the smallest relevant test set first.
