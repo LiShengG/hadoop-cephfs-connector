@@ -9,7 +9,7 @@ Status values are `VERIFIED`, `PARTIAL`, `NOT_VERIFIED`, `BLOCKED`, and `ACCEPTE
 |---|---|---|---|---|
 | Correctness | PARTIAL | UT, CT, FN, and NEG definitions applicable to supported behavior | [E2 release regression](reports/2026-08-15-e2-release-regression.md) | FN and NEG matrices are incomplete; see T09/T12 |
 | Reliability | NOT_VERIFIED | REL-F01–REL-F15 with integrity checks and recovery evidence | — | T09 is blocked by T08 |
-| Ecosystem | PARTIAL | Required ECO P0/P1 cases and component support conclusions | [E3 distributed ecosystem](reports/2026-08-15-e3-distributed-ecosystem.md) | Spark format/commit, Kerberos, HBase, Flink, scale, and failure cases remain |
+| Ecosystem | PARTIAL | Required ECO P0/P1 cases and component support conclusions | [E3 distributed ecosystem](reports/2026-08-15-e3-distributed-ecosystem.md); [E3 Hadoop CLI](reports/2026-08-16-e3-cli.md); [E3 Spark P0](reports/2026-08-16-e3-spark-p0.md) | Kerberos, HBase, Flink, scale, and failure cases remain |
 | Performance | NOT_VERIFIED | PERF-01–PERF-15 with an environment fingerprint | — | T10 is blocked |
 | Long-running behavior | NOT_VERIFIED | SOAK-01–SOAK-05, including stable native sessions and resources | [E3 Hive Tez](reports/2026-08-15-e3-hive-tez.md) | Existing evidence observes stale sessions; it is not a pass |
 | Security | NOT_VERIFIED | SEC-01–SEC-10 and ECO-SEC-01–05 in an isolated security environment | [E3 distributed ecosystem](reports/2026-08-15-e3-distributed-ecosystem.md) | Kerberos and multi-tenant authorization are not verified |
