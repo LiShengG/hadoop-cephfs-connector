@@ -61,7 +61,7 @@ lib/JNI/keyring 三个路径指向发行版客户端与受限 cephx 身份。
 | `hadoop-cephfs/target/spike/logs/*.log` | 每个探针的完整 stdout（含人读的详情） |
 | `hadoop-cephfs/target/spike/ECO-FINDINGS-draft.md` | 待人工整理的结论草稿 |
 
-脚本**不直接写 `docs/`**——结论需人工整理进 `docs/ECO-FINDINGS.md`，补上复现命令与
+脚本**不直接写 `docs/`**——结论需人工整理进 `docs/reports/` 的日期化报告，补上复现命令与
 原始输出片段（体例同 `docs/FAULT-BEHAVIOR.md`）。
 
 ## VERDICT 口径

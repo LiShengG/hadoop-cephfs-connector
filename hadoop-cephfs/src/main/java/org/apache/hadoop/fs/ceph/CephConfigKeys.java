@@ -18,7 +18,7 @@
 package org.apache.hadoop.fs.ceph;
 
 /**
- * Hadoop CephFS 连接器全部配置键与默认值（架构文档 §5，冻结）。
+ * Hadoop CephFS 连接器全部配置键与默认值的权威来源。
  *
  * <p>命名约定：{@code *_KEY} 为配置键名，{@code *_DEFAULT} 为对应默认值；
  * 默认值为 {@code null} 表示"未配置则不生效/不下发"。
@@ -75,7 +75,7 @@ public final class CephConfigKeys {
 
   /**
    * 上报的副本数（T03 增补，登记于 PROGRESS.md）。CephFS 的真实冗余由 pool
-   * 决定（架构文档 §4-4），本值仅用于 {@code getDefaultReplication} 与
+   * 决定（见 docs/ARCHITECTURE.md），本值仅用于 {@code getDefaultReplication} 与
    * {@code FileStatus.getReplication} 的报告，不影响实际存储。
    */
   public static final String CEPH_REPLICATION_KEY = "ceph.replication";

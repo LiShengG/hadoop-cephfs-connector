@@ -20,7 +20,7 @@
 <!--
   CephFS (ceph://) 的 Hadoop FileSystem 契约声明（T06）。
   每项取值均以实测为准，依据标注在各项注释中；语义口径见
-  架构文档 §4 与 PROGRESS.md T03/T04/T06 节。
+  当前语义见 docs/ARCHITECTURE.md，历史验收见 docs/archive/2026-07.md。
   -->
 <configuration>
 
@@ -98,7 +98,7 @@
     <value>false</value>
   </property>
 
-  <!-- ═══ rename（架构文档 §4-1 + T03 偏差 4） ═══ -->
+  <!-- ═══ rename（语义见 docs/ARCHITECTURE.md 与 ADR-0004） ═══ -->
 
   <!-- dst 已存在文件 → 返回 false 且不覆盖（禁止 POSIX 静默覆盖） -->
   <property>
@@ -152,7 +152,7 @@
     <value>true</value>
   </property>
 
-  <!-- 不支持 concat（架构文档 §1.2 非目标；FileSystem 基类默认抛
+  <!-- 不支持 concat（见 docs/KNOWN-LIMITATIONS.md；FileSystem 基类默认抛
        UnsupportedOperationException） -->
   <property>
     <name>fs.contract.supports-concat</name>

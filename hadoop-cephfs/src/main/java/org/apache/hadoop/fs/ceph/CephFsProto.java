@@ -29,16 +29,13 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 
 /**
- * 连接器需要的全部 CephFS 原语的抽象层（架构文档 §3.1，T02 冻结）。
+ * 连接器需要的全部 CephFS 原语的抽象层（见 docs/ARCHITECTURE.md）。
  *
  * <p>{@code CephFileSystem} 及流类只通过本抽象类访问 CephFS；生产实现为
  * {@link CephTalker}（封装 {@code com.ceph.fs.CephMount}），单元测试可用
  * Mockito mock 替换，无需真实集群。
  *
- * <p><b>签名冻结说明</b>：本类签名以 Ceph 16.2.14 实际源码
- * {@code ceph/src/java/java/com/ceph/fs/CephMount.java} 核对为准
- * （与架构文档 §3.1 草案的差异已登记 PROGRESS.md：read/write 返回 long）。
- * 后续任务（T03–T07）只增不改。
+ * <p><b>签名权威来源</b>：本类与实际 Ceph Java 绑定源码。
  *
  * <p><b>通用异常约定</b>：底层 JNI 将 errno 映射为 Java 异常
  * （见 {@code libcephfs_jni.cc} 的 {@code handle_error}）：
@@ -234,8 +231,7 @@ abstract class CephFsProto {
   /**
    * 读文件。
    *
-   * <p>与架构文档 §3.1 草案的差异：返回类型为 <b>long</b>（与
-   * {@code CephMount.read} 一致，已登记 PROGRESS.md）。
+   * <p>返回类型与 {@code CephMount.read} 一致，为 <b>long</b>。
    *
    * @param fd     文件描述符
    * @param buf    目标缓冲区
@@ -249,8 +245,7 @@ abstract class CephFsProto {
   /**
    * 写文件。
    *
-   * <p>与架构文档 §3.1 草案的差异：返回类型为 <b>long</b>（与
-   * {@code CephMount.write} 一致，已登记 PROGRESS.md）。
+   * <p>返回类型与 {@code CephMount.write} 一致，为 <b>long</b>。
    *
    * @param fd     文件描述符
    * @param buf    数据缓冲区

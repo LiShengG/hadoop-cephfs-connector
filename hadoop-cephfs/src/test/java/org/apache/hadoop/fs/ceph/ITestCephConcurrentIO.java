@@ -48,7 +48,7 @@ import org.junit.Test;
  * （即共享一个 CephMount），各自写/读独立文件并做 md5 比对，
  * 验证共享 mount 无死锁、无数据错乱、无 fd 泄漏。
  *
- * <p>门控：{@code CEPH_CONTRACT_TEST=1}；集群约定见 docs/ENV.md。
+ * <p>门控：{@code CEPH_CONTRACT_TEST=1}；集群约定见 docs/environments/E1.md。
  */
 public class ITestCephConcurrentIO {
 

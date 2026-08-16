@@ -67,16 +67,16 @@ import org.slf4j.LoggerFactory;
  * CephFS 的 Hadoop {@link FileSystem} 实现（{@code ceph://} scheme）。
  *
  * <p>本类只做 Hadoop 语义适配（路径解析、异常映射、rename/delete/mkdirs 语义
- * 修正 —— 架构文档 §4 差异表），所有 CephFS 调用经由 {@link CephFsProto}
+ * 修正，见 docs/ARCHITECTURE.md），所有 CephFS 调用经由 {@link CephFsProto}
  * （生产实现 {@link CephTalker}；单测注入 Mockito mock）。
  *
  * <p><b>T03 交付范围</b>：生命周期 + 全部元数据操作。T04 补齐数据流方法
  * {@link #open(Path, int)} / {@link #create} / {@link #append}。
  *
  * <p><b>workingDir</b>：纯 Java 侧维护（不使用 ceph_chdir），初始
- * {@code /user/<ugi.shortUserName>}（架构文档 §4-7）。
+ * {@code /user/<ugi.shortUserName>}（见 docs/ARCHITECTURE.md）。
  *
- * <p><b>uid/gid → 用户名</b>（架构文档 §4-6）：不做 NSS 查询。uid 与当前进程
+ * <p><b>uid/gid → 用户名</b>（限制见 docs/KNOWN-LIMITATIONS.md）：不做 NSS 查询。uid 与当前进程
  * uid 相同时报告当前用户名，否则报告数字字符串；gid 一律数字字符串
  * （无法在不查 NSS 的前提下取得组名）。
  */
@@ -175,7 +175,7 @@ public class CephFileSystem extends FileSystem {
     return workingDir;
   }
 
-  /** 相对路径按 workingDir 解析为绝对路径（纯 Java，架构文档 §4-7）。 */
+  /** 相对路径按 workingDir 解析为绝对路径（纯 Java，docs/ARCHITECTURE.md）。 */
   private Path makeAbsolute(Path path) {
     if (path == null) {
       return workingDir;
@@ -209,7 +209,7 @@ public class CephFileSystem extends FileSystem {
     return result;
   }
 
-  /** lstat 结果 → Hadoop FileStatus（架构文档 §3.2 / §4-4 / §4-6 / §4-8）。 */
+  /** lstat 结果 → Hadoop FileStatus（语义见 docs/ARCHITECTURE.md）。 */
   private FileStatus toFileStatus(Path abs, CephStat stat) {
     boolean isDir = stat.isDir();
     long length = isDir ? 0 : stat.size;
@@ -232,11 +232,11 @@ public class CephFileSystem extends FileSystem {
   }
 
   private String groupName(int gid) {
-    // 不做 NSS 查询（§4-6），一律数字字符串
+    // 不做 NSS 查询（限制见 docs/KNOWN-LIMITATIONS.md），一律数字字符串
     return Integer.toString(gid);
   }
 
-  // ── 修改类（严格按架构文档 §4 语义差异表） ──────────────────────────────
+  // ── 修改类（Hadoop 可观察语义见 docs/ARCHITECTURE.md） ──────────────────────────────
 
   @Override
   public boolean mkdirs(Path f, FsPermission permission) throws IOException {
@@ -339,7 +339,7 @@ public class CephFileSystem extends FileSystem {
     return true;
   }
 
-  /** 后序遍历删除子树（libcephfs rmdir 仅支持空目录，架构文档 §4-2）。 */
+  /** 后序遍历删除子树（libcephfs rmdir 仅支持空目录，docs/ARCHITECTURE.md）。 */
   private void deleteSubtree(Path p) throws IOException {
     CephStat stat = new CephStat();
     try {
@@ -655,7 +655,7 @@ public class CephFileSystem extends FileSystem {
     return new FsStatus(capacity, capacity - remaining, remaining);
   }
 
-  // ── 数据局部性（T05，架构文档 §3.2 BlockLocation 行） ────────────────────
+  // ── 数据局部性（语义见 docs/ARCHITECTURE.md） ────────────────────
 
   /** OSD 地址解析失败时的降级 hosts（不让作业提交失败，任务书 T05）。 */
   private static final String[] LOCALHOST_HOSTS = { "localhost" };
@@ -1035,7 +1035,7 @@ public class CephFileSystem extends FileSystem {
   /**
    * 从 /proc/self/status 读取进程真实 uid/gid（Linux）。失败返回 -1
    * （与任何 CephFS uid/gid 都不相等，owner/group 回落为数字字符串）。
-   * 不做 NSS 查询（架构文档 §4-6）。
+   * 不做 NSS 查询（限制见 docs/KNOWN-LIMITATIONS.md）。
    */
   private static int readProcSelfStatusId(String prefix) {
     try {

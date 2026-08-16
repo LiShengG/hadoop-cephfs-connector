@@ -25,7 +25,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.junit.Test;
 
 /**
- * 校验 CephConfigKeys 的键名与默认值与架构文档 §5（冻结）严格一致，
+ * 校验 CephConfigKeys 作为键名与默认值权威来源的回归行为，
  * 防止后续改动无意破坏配置兼容性。无需真实集群。
  */
 public class TestCephConfigKeys {

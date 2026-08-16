@@ -5,7 +5,7 @@
 #     hadoop-cephfs-<version>/
 #       hadoop-cephfs-<version>.jar   连接器（不含 Hadoop、不含 libcephfs）
 #       libcephfs.jar                 Ceph 官方 Java 绑定（与 jni so 同源构建）
-#       libcephfs_jni.so              JNI 原生库（重建方法见 docs/ENV.md §2）
+#       libcephfs_jni.so              JNI 原生库（重建方法见 docs/environments/E1.md）
 #       conf/core-site.xml.example    全部配置键的注释样例
 #       README.md                     快速安装说明
 #       docs/DEPLOY.md                完整部署文档
@@ -35,8 +35,8 @@ VERSION="$(grep -m1 -oP '(?<=<version>)[^<]+' "$MVN_PROJ/pom.xml")"
 [ -n "$VERSION" ] || die "无法从 pom.xml 解析版本号"
 log "版本: $VERSION"
 
-[ -f "$NATIVE_DIR/libcephfs.jar" ]    || die "缺 $NATIVE_DIR/libcephfs.jar（重建见 docs/ENV.md §2）"
-[ -f "$NATIVE_DIR/libcephfs_jni.so" ] || die "缺 $NATIVE_DIR/libcephfs_jni.so（重建见 docs/ENV.md §2）"
+[ -f "$NATIVE_DIR/libcephfs.jar" ]    || die "缺 $NATIVE_DIR/libcephfs.jar（重建见 docs/environments/E1.md）"
+[ -f "$NATIVE_DIR/libcephfs_jni.so" ] || die "缺 $NATIVE_DIR/libcephfs_jni.so（重建见 docs/environments/E1.md）"
 [ -f "$PROJ_ROOT/conf/core-site.xml.example" ] || die "缺 conf/core-site.xml.example"
 [ -f "$PROJ_ROOT/docs/DEPLOY.md" ]    || die "缺 docs/DEPLOY.md"
 

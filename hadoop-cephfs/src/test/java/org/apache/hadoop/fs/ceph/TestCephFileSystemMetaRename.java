@@ -44,7 +44,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 /**
- * rename 全分支矩阵 mock 单测（架构文档 §4 表 1：禁止 POSIX 静默覆盖、
+ * rename 全分支矩阵 mock 单测（docs/ARCHITECTURE.md：禁止 POSIX 静默覆盖、
  * dst 目录移入其下、src 不存在返回 false 等）。
  */
 public class TestCephFileSystemMetaRename {

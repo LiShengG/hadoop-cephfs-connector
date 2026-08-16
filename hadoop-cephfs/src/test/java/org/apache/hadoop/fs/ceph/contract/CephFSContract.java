@@ -27,12 +27,12 @@ import org.apache.hadoop.fs.contract.AbstractBondedFSContract;
  *
  * <p>能力声明见 {@code src/test/resources/contract/ceph.xml}。
  *
- * <p><b>门控</b>（协作规范 §4）：环境变量 {@code CEPH_CONTRACT_TEST=1} 时才把
+ * <p><b>门控</b>（见 AGENTS.md）：环境变量 {@code CEPH_CONTRACT_TEST=1} 时才把
  * {@code fs.contract.test.fs.ceph} 注入配置；未设置时
  * {@link AbstractBondedFSContract} 视为契约未启用，全部用例 skip，
  * 保证无集群环境 {@code mvn verify} 绿色。
  *
- * <p>集群信息以 docs/ENV.md 为准：mon 地址一律经 {@code ceph.conf.file} 读取
+ * <p>集群信息以 docs/environments/E1.md 为准：mon 地址一律经 {@code ceph.conf.file} 读取
  * （可用 -Dceph.conf.file 或环境变量 CEPH_CONF_FILE 覆盖），auth id 用 admin。
  *
  * <p>运行方式（集群启动后）：

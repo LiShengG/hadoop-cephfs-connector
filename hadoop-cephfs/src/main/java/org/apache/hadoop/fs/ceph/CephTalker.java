@@ -41,7 +41,7 @@ import org.slf4j.LoggerFactory;
  * native 指针）；本类不额外加锁。一个 {@code CephTalker} 对应一个 mount，
  * 由所属 {@code CephFileSystem} 实例独占。
  *
- * <p>运行前提（docs/ENV.md §3）：JVM 须以
+ * <p>运行前提（docs/environments/E1.md）：JVM 须以
  * {@code -Djava.library.path=<dist/native>:<ceph/build/lib>} 启动，且进程环境含
  * {@code LD_LIBRARY_PATH=<ceph/build/lib>}，否则 {@code CephMount} 类加载即抛
  * {@code UnsatisfiedLinkError}。
@@ -65,7 +65,7 @@ class CephTalker extends CephFsProto {
         CephConfigKeys.CEPH_AUTH_ID_DEFAULT);
     CephMount m = new CephMount(authId);
 
-    // 2. 读 ceph.conf（mon 地址等以此为准，勿硬编码 —— docs/ENV.md §1）
+    // 2. 读 ceph.conf（mon 地址等以此为准，勿硬编码 —— docs/environments/E1.md）
     String confFile = conf.get(CephConfigKeys.CEPH_CONF_FILE_KEY,
         CephConfigKeys.CEPH_CONF_FILE_DEFAULT);
     if (confFile != null) {
@@ -97,7 +97,7 @@ class CephTalker extends CephFsProto {
       m.conf_set("keyring", keyring);
     }
 
-    // URI authority（host[:port]）存在时覆盖 mon 地址（架构文档 §5）
+    // URI authority（host[:port]）存在时覆盖 mon 地址（docs/ARCHITECTURE.md）
     if (uri != null && uri.getHost() != null && !uri.getHost().isEmpty()) {
       String monHost = (uri.getPort() != -1)
           ? uri.getHost() + ":" + uri.getPort()
@@ -141,7 +141,7 @@ class CephTalker extends CephFsProto {
    *
    * <p>规则：剥离 scheme/authority；空路径与 null 视为根 "/"；
    * 相对路径解析到根（连接器不使用 ceph_chdir，libcephfs 侧 cwd 恒为根，
-   * workingDir 语义由上层 CephFileSystem 纯 Java 维护 —— 架构文档 §4-7）。
+   * workingDir 语义由上层 CephFileSystem 纯 Java 维护（docs/ARCHITECTURE.md）。
    * {@code Path} 本身已保证规范化（无重复/尾部斜杠）；URI 编码字符
    * （如空格）由 {@code URI#getPath()} 解码还原。
    *
@@ -190,7 +190,7 @@ class CephTalker extends CephFsProto {
     try {
       return m.listdir(pathString(path));
     } catch (IOException e) {
-      // 契约（架构文档 §3.1）：存在但非目录 → null。
+      // 契约（docs/ARCHITECTURE.md）：存在但非目录 → null。
       // 注：JNI 对 ENOTDIR 实际抛 CephNotDirectoryException（native 方法可
       // 绕过 listdir 的 throws 声明；JNI 源码注释"返回 NULL"与行为不符，
       // 以行为为准），此处适配回 null 契约。

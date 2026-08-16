@@ -7,7 +7,7 @@
  * 而调用方 DistCpUtils#compareFileLengthsAndChecksums 里：
  *   boolean checksumResult = !checksumComparison.equals(ChecksumComparison.FALSE);
  * 即 INCOMPATIBLE **被当作校验通过** —— 校验不是"失败"，而是**静默跳过**。
- * 这正是 TEST-PLAN 判定口径里最忌讳的"看起来成功了但没验"。
+ * 这正是 docs/TESTING.md 禁止的"看起来成功了但没验"。
  *
  * 其余部分把 TEST-CASES-ECO.md §2 的"API 支撑面盘点"从纸面推断变成实测清单：
  * hasPathCapability 全常量、流的 StreamCapabilities、truncate/concat/setReplication/
