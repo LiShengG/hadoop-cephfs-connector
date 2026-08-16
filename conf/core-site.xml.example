@@ -4,12 +4,12 @@
   Hadoop CephFS 连接器 core-site.xml 配置样例（hadoop-cephfs 1.0.0）
   ===================================================================
 
-  覆盖架构文档 §5 的全部配置键。使用方法：
+  配置键与默认值的权威来源为 CephConfigKeys.java。使用方法：
     1. 把下方「必配项」合并进 $HADOOP_CONF_DIR/core-site.xml（不要整文件替换，
        保留你已有的其他 Hadoop 配置）；
     2. 「可选项」按需取消注释；
     3. 每个键给出两组示例值：
-         [vstart]  本机 vstart 开发集群（源码仓库 docs/ENV.md 环境）
+         [vstart]  本机 vstart 开发集群（源码仓库 docs/environments/E1.md）
          [生产]    生产 Ceph 集群的典型值
        样例默认填 vstart 值，部署到生产时按注释替换。
 

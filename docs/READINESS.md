@@ -1,227 +1,39 @@
-# 完成进度表（hadoop-cephfs）
+# Production readiness
 
-> 更新日期：2026-08-15 ｜ 评估对象：当前主干（pom 版本 1.0.0）
-> 配套：[TEST-PLAN.md](TEST-PLAN.md)（怎么测）、[TEST-CASES-ECO.md](TEST-CASES-ECO.md)（生态场景）
-> **本表是活文档**：每个阶段（SPIKE/T08–T12）收尾时更新一次「当前」列与证据链接。
+> Updated: 2026-08-16
+> Evidence policy: only linked dated reports count as verified
 
----
+Status values are `VERIFIED`, `PARTIAL`, `NOT_VERIFIED`, `BLOCKED`, and `ACCEPTED_RISK`.
 
-## 1. 总览
+| Area | Status | Required evidence | Latest report | Open items |
+|---|---|---|---|---|
+| Correctness | PARTIAL | UT, CT, FN, and NEG definitions applicable to supported behavior | [E2 release regression](reports/2026-08-15-e2-release-regression.md) | FN and NEG matrices are incomplete; see T09/T12 |
+| Reliability | NOT_VERIFIED | REL-F01–REL-F15 with integrity checks and recovery evidence | — | T09 is blocked by T08 |
+| Ecosystem | PARTIAL | Required ECO P0/P1 cases and component support conclusions | [E3 distributed ecosystem](reports/2026-08-15-e3-distributed-ecosystem.md) | Spark format/commit, Kerberos, HBase, Flink, scale, and failure cases remain |
+| Performance | NOT_VERIFIED | PERF-01–PERF-15 with an environment fingerprint | — | T10 is blocked |
+| Long-running behavior | NOT_VERIFIED | SOAK-01–SOAK-05, including stable native sessions and resources | [E3 Hive Tez](reports/2026-08-15-e3-hive-tez.md) | Existing evidence observes stale sessions; it is not a pass |
+| Security | NOT_VERIFIED | SEC-01–SEC-10 and ECO-SEC-01–05 in an isolated security environment | [E3 distributed ecosystem](reports/2026-08-15-e3-distributed-ecosystem.md) | Kerberos and multi-tenant authorization are not verified |
+| Compatibility | NOT_VERIFIED | COMPAT-01–COMPAT-12 | [E2 release regression](reports/2026-08-15-e2-release-regression.md) | One baseline combination is evidence, not the required matrix |
+| Engineering gates | PARTIAL | Repeatable E1/E2/E3 supply, CI, coverage, static/CVE, artifact, and flaky gates | [E1 regression](reports/2026-08-14-e1-regression.md) | CI, repeatable provisioning, coverage, static/CVE, artifact, and flaky gates remain |
+| Deployment and operations | PARTIAL | OPS-01–OPS-10 | [E3 distributed ecosystem](reports/2026-08-15-e3-distributed-ecosystem.md) | Upgrade, rollback, monitoring, diagnostic, and reproducibility cases remain |
 
-| # | 维度 | 权重 | 当前 | 加权 | 一句话差距 |
-|---|---|---:|---:|---:|---|
-| A | 功能完整性 | 10 | **92%** | 9.2 | 多主机 BlockLocation 已验证，仅缺 checksum/truncate 等边角 |
-| B | 语义正确性 | 15 | **85%** | 12.8 | E2 Release 与最小权限已过，官方基类及规模边界仍待补 |
-| C | 可靠性与恢复 | 15 | **0%** | 0.0 | 15 类故障一条没测；代码无重试无重连 |
-| D | 性能与容量 | 10 | **0%** | 0.0 | 无任何基线，不知道比内核 mount 慢多少 |
-| E | 长稳与资源 | 10 | **5%** | 0.5 | 最长跑过 300 秒 |
-| F | 生态兼容 | 20 | **50%** | 10.0 | E3 Hive MR/Tez 基础矩阵通过；ACID/Kerberos 与其余组件待补 |
-| G | 安全与多租户 | 8 | **20%** | 1.6 | 身份模型未澄清，安全集群适用性未知 |
-| H | 工程化与门禁 | 7 | **40%** | 2.8 | E2/E3 已建并有只读检查；仍缺一键重建、CI 与质量门禁 |
-| I | 文档与交付 | 5 | **70%** | 3.5 | 部署文档扎实，缺支持矩阵与安全边界 |
-| | **合计** | **100** | | **≈ 40%** | 距 GA 尚远，差的是完整场景、故障与长稳证据 |
+## Required release evidence
 
-> 与上一轮口头估算（35–40%）的差异：本表把**生态兼容提到 20% 权重**（它是 P0 阻断项，
-> 一条不过就不能发 GA），可靠性提到 15%，因此初始加权基线约 28%；F0 A 层完成后
-> 当前为约 29%。以本表为准。
+| Milestone | Requirement | Tracking |
+|---|---|---|
+| Beta candidate | T08 and T09 acceptance criteria; no open S1 data-loss or silent-corruption issue | [T08](tasks/T08-测试基础设施与质量门禁.md), [T09](tasks/T09-功能深化与故障注入.md) |
+| RC candidate | Beta evidence plus T10 and T11 acceptance criteria | [T10](tasks/T10-性能与容量基准.md), [T11](tasks/T11-生态集成与兼容矩阵.md) |
+| Release candidate | RC evidence plus T12 security, soak, operations, negative-path, and waiver review | [T12](tasks/T12-安全长稳与发布验收.md) |
 
-> **2026-08-14 E1 复验**：在 `10.20.40.26` 重新构建 Ceph 16.2.14 Java/JNI 绑定，
-> 建成 3 mon + 1 mgr + 1 active mds + 4 osd 的单机 vstart CephFS `a`；122 例无集群
-> 单测、140 例契约/集成门控、CLI 200MB md5 往返与发布包构建全部通过。该证据恢复了
-> 可重复执行的 E1 回归底座，但仍属单机 Debug、`client.admin`、size=1 环境，故总评分不变。
+No milestone above is currently marked verified. Active sequencing and environment blockers are
+maintained in [`../PROGRESS.md`](../PROGRESS.md). Current product restrictions are maintained in
+[KNOWN-LIMITATIONS.md](KNOWN-LIMITATIONS.md).
 
-> **2026-08-15 SP-04 E1 修复复验**：URI 默认端口与普通文件原子 no-replace 已修复；
-> 128/128 单测、FileContext 6/6、mkdir 契约 8/8 通过。Spark 3.4.4 checkpoint 可重启，
-> 双实例竞争正确失败一个且可恢复。该次证据仍是 E1 Debug/local 模式，F 维度暂不调整；
-> 随后的 E2 Release 复验见下一段。
+## Update rules
 
-> **2026-08-15 E2 复验**：`.44/.26/.28` 已建成官方 Pacific Release 三节点集群：
-> 3 MON、2 MGR、6 OSD、3 MDS，CephFS 池 `size=3/min_size=2`。使用受限
-> `client.hadoop` 与 Release JNI、清空 lockdep workaround 后，128/128 单测与 142/142
-> 契约/集成测试通过；BlockLocation 返回三个真实 OSD 主机。环境指纹、设备白名单与复验命令见
-> [E2-ENV.md](E2-ENV.md)。据此只上调 A3、B2/B5 与 H4，未覆盖故障、长稳或 E3。
-
-> **2026-08-15 E3 验证**：同三节点部署 Hadoop 3.3.6、HDFS/YARN/JHS 与 Spark 3.4.4。
-> 两种 MR 部署形态、CephFS YARN 日志聚合以及三节点 Spark checkpoint 已运行；Spark 从
-> batch 0/40 行推进到原子提交后应用失败，再由后继应用以同 query ID 恢复到 batch 2/120 行。
-> 证据与限制见 [E3-ENV.md](E3-ENV.md)。据此上调 F 与 H4，不上调长稳或通用可靠性。
-
-> **2026-08-15 E3 第二轮**：FileOutputCommitter v1/v2、map 推测执行、DistributedCache
-> 正确分发、DistCp 双向及 SP-07 `-update` 负向均取得真实 YARN 证据。应用结束超过 400 秒后 MDS
-> 会话未回到基线，且发生过 Ceph 4/6 OSD 与 mount timeout，故 F 上调至 35%，E/C 不上调。
-
-> **2026-08-15 E3 第三轮**：Hive 基线调整为 4.0.1；真实 YARN application `0019`–`0028`
-> 覆盖 TextFile、ORC 动态分区、Parquet CTAS、ANALYZE、MSCK 与 TRUNCATE，均成功且无 staging
-> 残留。SP-06A 确认 CephFS 不提供 Token、三节点依赖同一静态 keyring，但集群仍为 simple
-> auth，Kerberos SP-06B 未完成。故 F 上调至 45%，G/C/E 不调整。
-
-> **2026-08-15 E3 第四轮**：Tez 0.10.4 application `0033` 在 `.26/.28` 完成 6/6 DAG，
-> Hive Text/ORC/Parquet、动态分区、MSCK、ANALYZE、TRUNCATE 全部通过。成功后 session 从
-> 11 增至 13，新增两条均属于死 PID；故 F 上调至 50%，E/C 不调整。
-
-进度条视图：
-
-```
-A 功能完整性  ██████████████████░░  92%
-B 语义正确性  █████████████████░░░  85%
-C 可靠性      ░░░░░░░░░░░░░░░░░░░░   0%   ← 权重 15，全空
-D 性能        ░░░░░░░░░░░░░░░░░░░░   0%   ← 权重 10，全空
-E 长稳        █░░░░░░░░░░░░░░░░░░░   5%
-F 生态兼容    ██████████░░░░░░░░░░  50%   ← Hive 4 MR/Tez 双引擎基础矩阵已有真实证据
-G 安全        ████░░░░░░░░░░░░░░░░  20%
-H 工程化      ████████░░░░░░░░░░░░  40%
-I 文档        ██████████████░░░░░░  70%
-```
-
----
-
-## 2. 明细：每项要做的事
-
-状态图例：✅ 完成 ｜ 🟡 部分 ｜ ⬜ 未开始 ｜ ⛔ 阻塞（缺资源）
-
-### A. 功能完整性（92%）
-
-| ID | 子项 | 状态 | 要做的事（简述） | 阶段 | 达标判据 |
-|---|---|:--:|---|---|---|
-| A1 | FileSystem 全量 API | ✅ | 已实现，无需再做 | — | 契约通过 |
-| A2 | AbstractFileSystem/FileContext | ✅ | 已由 `CephFs` 委托实现 | — | 同上 |
-| A3 | 数据局部性 BlockLocation | ✅ | E2 Release 上返回 `.26/.28/.44` 三个真实 OSD 主机地址 | T09 | FN-25 通过 |
-| A4 | `getFileChecksum` | ⬜ | 先由 SP-07 定影响面，再决定实现或书面声明不支持 | SPIKE→T11 | 附录 A-5 结论化 |
-| A5 | `truncate` / `concat` | ⬜ | 确认"明确失败+可读消息"，并在 `hasPathCapability` 如实声明 | T11 | NEG-02 通过 |
-| A6 | 能力声明完整性 | 🟡 | 跑 `sp07-checksum-caps.sh` 拿实测清单，补齐/修正声明 | SPIKE | 能力表与实际行为一致 |
-
-### B. 语义正确性（85%）
-
-| ID | 子项 | 状态 | 要做的事（简述） | 阶段 | 达标判据 |
-|---|---|:--:|---|---|---|
-| B1 | Hadoop 契约 116 例 | ✅ | 2026-08-15 在 E2 Release 复跑全绿（128 单测、142 契约/集成） | — | — |
-| B2 | 契约在**生产仿真集群**重跑 | ✅ | 3 副本、Release 构建、3 MDS 的 E2 上 142/142 通过 | T08 | CT-06 结果与 E1 一致 |
-| B3 | 官方 FSMainOperations 套件 | ⬜ | 接入 `FSMainOperationsBaseTest`，零新增依赖补数十例官方断言 | T08 | CT-01 全绿 |
-| B4 | 官方 FileContext 套件 | ⬜ | 接入 FileContext 三套基类——YARN 走的就是这条路径，当前几乎无覆盖 | T08 | CT-02/03/04/05 全绿 |
-| B5 | 最小权限用户下重跑 | ✅ | 受限 `client.hadoop`（mon r/mds rwp/osd rw，限定 fs）跑 142/142 | T08 | CT-08 全绿 |
-| B6 | 规模与边界语义 | ⬜ | 10GB 文件、>2^31 偏移、10 万条目目录、特殊文件名、100 层深目录 | T09 | FN-01–FN-10 |
-| B7 | 可见性语义定稿 | ⬜ | 跑 SP-05 定"已打开 reader 看不到追加"的口径，写入已知限制 | SPIKE | 附录 A-2 结论化 |
-
-### C. 可靠性与恢复（0%）— 权重 15，完全空白
-
-| ID | 子项 | 状态 | 要做的事（简述） | 阶段 | 达标判据 |
-|---|---|:--:|---|---|---|
-| C1 | MDS failover | ⛔ | 杀 active MDS，观察进行中的读写是否阻塞后自动恢复、阻塞多久 | T09 | REL-F01，md5 一致 |
-| C2 | MDS 全灭 | ⛔ | 确认是挂起还是报错、恢复后是否必须重建 FileSystem | T09 | REL-F02 结论化 |
-| C3 | OSD down / PG inactive | ⛔ | 分别在副本充足与不足时验证 IO 行为与恢复后一致性 | T09 | REL-F03/F04 |
-| C4 | **客户端被 evict/blocklist** | ⛔ | 最关键一条：连接器无重连，需确认能否恢复、给运维处置口径 | T09 | REL-F06 →附录 A-1 |
-| C5 | mon 不可达 / 网络劣化 | ⛔ | 记录 mount 期与运行期的超时与报错原文，补进排查表 | T09 | REL-F05/F07 |
-| C6 | ENOSPC / 配额 | ⛔ | 确认错误是否可诊断，决定是否需专门异常映射 | T09 | REL-F09/F10 →A-6 |
-| C7 | kill -9 持久性 | ⛔ | 已 hsync 的数据必须存活且文件不损坏 | T09 | REL-F13 |
-| C8 | 并发竞态 | ⬜ | 并发 rename/delete/create 的真实竞态验证（代码里已有竞态分支） | T09 | FN-15/16/17 |
-| C9 | 故障注入脚本化 | ⬜ | `scripts/fault/*.sh`，四段式（注入→观察→恢复→校验），失败能自动恢复集群 | T09 | 连跑 2 轮集群回 HEALTH_OK |
-
-### D. 性能与容量（0%）— 权重 10，完全空白
-
-| ID | 子项 | 状态 | 要做的事（简述） | 阶段 | 达标判据 |
-|---|---|:--:|---|---|---|
-| D1 | 内核 mount 对照基线 | ⛔ | 同机同 pool 用 fio 建 100% 参照，之后一切数据只报百分比 | T10 | 基线归档 |
-| D2 | 顺序读写吞吐 | ⛔ | 单流与 8 并发聚合 | T10 | ≥70% / ≥85% |
-| D3 | 元数据 OPS 与延迟 | ⛔ | create/stat/list/rename/delete 的 OPS 与 p99 | T10 | ≥60% / p99<100ms |
-| D4 | 参数敏感度 | ⛔ | buffer size / object size / localize_reads 三组矩阵，给推荐默认值 | T10 | 出调优建议 |
-| D5 | 实现敏感点量化 | ⛔ | listStatus 的 N+1 RPC、每次 hflush 全量 fsync、BlockLocation 开关 fd 的开销 | T10 | 决定是否触发 A-3 |
-| D6 | 回归比较机制 | ⬜ | `compare-baseline.sh`，相对上版退化 >10% 即判负 | T10 | 自测判负成功 |
-
-### E. 长稳与资源（5%）
-
-| ID | 子项 | 状态 | 要做的事（简述） | 阶段 | 达标判据 |
-|---|---|:--:|---|---|---|
-| E1 | 72h 混合负载 | ⛔ | 读写 7:3 + 元数据 + 每 6h 故障注入 + 每小时 md5 抽样 | T12 | 0 失败 |
-| E2 | **native 内存**趋势 | ⛔ | libcephfs 在 JVM 堆外，必须用 NMT/pmap 单独盯 RSS | T12 | <5%/24h |
-| E3 | fd / 线程 / 会话数 | ⛔ | 60s 粒度采集，负载结束后 fd 必须归零 | T12 | 稳态且归零 |
-| E4 | `CephFs` mount 生命周期 | 🟡 | Spark/Hive/Tez/yarn logs 均观察到 lingering session，且曾阻塞后继 lstat；仍需修复与长跑归零 | T12 | SOAK-05 结论化 |
-
-### F. 生态兼容（50%）— 权重 20，**最大缺口**
-
-| ID | 子项 | 状态 | 要做的事（简述） | 阶段 | 达标判据 |
-|---|---|:--:|---|---|---|
-| F0 | **8 条 spike 证伪** | 🟡 | A 层已完成；SP-04B 与真实 E3 Spark/MR/YARN/Hive B 层部分完成，Kerberos SP-06B 待补 | SPIKE | A+B 层均有结论 |
-| F1 | 真实 Hadoop 发行版 | 🟡 | Hadoop 3.3.6 E3 已跑 CLI/MR 基础路径，ECO-CLI 全矩阵待补 | T11 | ECO-CLI-01 |
-| F2 | MapReduce | 🟡 | 两种 defaultFS、committer v1/v2 和 map 推测执行通过；其余 MR 场景待补 | T11 | ECO-MR 14 条 |
-| F3 | YARN | 🟡 | 3 NM、日志聚合/JHS、资源正确本地化已通过；跨应用 cache 复用和 NM 长跑待补 | T11 | ECO-YARN 8 条 |
-| F4 | Hive | 🟡 | Hive 4.0.1 MR/Tez 已通过 Text/ORC/Parquet、动态分区、MSCK、ANALYZE、TRUNCATE；ACID/授权与规模待补 | T11 | ECO-HIVE 14 条 |
-| F5 | Spark | 🟡 | E3 三节点 checkpoint/Parquet/event log 与失败后恢复已通过；ORC 和提交协议矩阵待补 | T11 | ECO-SPK 10 条 |
-| F6 | DistCp | 🟡 | 双向复制通过；`-update` 已实证等长不同内容静默跳过，余项与使用口径待补 | T11 | ECO-DCP 7 条 |
-| F7 | HBase / Tez / Flink | 🟡 | Tez 0.10.4 基础 DAG 已通过；HBase/Flink 和 Tez 故障/规模边界待结论 | T11 | 结论进支持矩阵 |
-| F8 | 兼容矩阵 | ⛔ | Hadoop×JDK×Ceph×OS 四维；含 jar 与 so 版本错配的负向用例 | T11 | COMPAT P0 全绿 |
-| F9 | **《组件支持矩阵》** | ⛔ | 最终对外交付物：每组件标支持/受限/不支持 + 配置示例 | T11 | 发布到 README+DEPLOY |
-
-### G. 安全与多租户（20%）
-
-| ID | 子项 | 状态 | 要做的事（简述） | 阶段 | 达标判据 |
-|---|---|:--:|---|---|---|
-| G1 | cephx 最小权限 | 🟡 | 已知需 `mds rwp`，需扩成完整 caps 矩阵（r / rw / 路径受限 / root_squash） | T12 | SEC-02 矩阵表 |
-| G2 | **身份模型澄清** | ⬜ | 所有请求用同一 cephx id、UGI 不下传 MDS——实测确认并写《安全模型与适用边界》 | T12 | SEC-01 + 文档章节 |
-| G3 | Kerberos 集群适用性 | 🟡 | E3 simple auth 已确认无 Token 且三节点共享可读 keyring；仍需 Kerberized E3/E4 完成 SP-06B | SPIKE→T12 | SP-06 + A-10 |
-| G4 | 多租户隔离 | ⬜ | 每租户独立 cephx + `ceph.root.dir`，验证越界必失败 | T12 | SEC-03/04 |
-| G5 | 密钥不泄漏 | ⬜ | 对全部测试日志做 grep 断言，0 命中 | T12 | SEC-05 |
-| G6 | 依赖 CVE | ⬜ | 接 OWASP dependency-check 进门禁 | T08 | 无 CVSS≥7 未豁免 |
-
-### H. 工程化与门禁（30%）
-
-| ID | 子项 | 状态 | 要做的事（简述） | 阶段 | 达标判据 |
-|---|---|:--:|---|---|---|
-| H1 | CI 流水线 | ⬜ | 建 `.github/workflows`：PR 门禁≤10min、合并门禁≤30min、夜间、周度 | T08 | 各跑通 3 次 |
-| H2 | 覆盖率门禁 | ⬜ | 接 JaCoCo，行≥80%/分支≥70%，不达标 fail build | T08 | 门禁生效 |
-| H3 | 静态检查 | ⬜ | Checkstyle + SpotBugs(findsecbugs)，0 High | T08 | 门禁生效 |
-| H4 | 测试床供给 | 🟡 | E1 已恢复；E2/E3 三节点已建、指纹与只读状态检查已归档，仍需一键重建 | T08 | 可重复重建 |
-| H5 | 制品可重现性 | ⬜ | 两次打包 sha256 一致；发布 so 不带构建机 RUNPATH | T08 | artifact-check 通过 |
-| H6 | JDK 版本钉死 | ⬜ | CI 镜像可能默认 JDK 21，而基线是 JDK 11——门禁必须显式指定 | T08 | 流水线声明版本 |
-| H7 | flaky 管控 | ⬜ | 连续 20 轮统计，禁止自动 rerun 掩盖，flaky 一律建单 | T08 | flaky<1% |
-
-### I. 文档与交付（70%）
-
-| ID | 子项 | 状态 | 要做的事（简述） | 阶段 | 达标判据 |
-|---|---|:--:|---|---|---|
-| I1 | 部署/开发/环境文档 | ✅ | 已实测充分 | — | — |
-| I2 | 故障排查表 | 🟡 | 现有 6 类，需按 T09 的 15 类故障结论扩充（症状须真实复现） | T09 | 排查表更新 |
-| I3 | 《组件支持矩阵》 | ⬜ | 见 F9 | T11 | — |
-| I4 | 《安全模型与适用边界》 | ⬜ | 见 G2 | T12 | — |
-| I5 | 《已知限制》 | ⬜ | 汇总可见性快照、chown 只认数字、无 checksum、无 Token 等 | T12 | 章节发布 |
-| I6 | 性能基线报告 | ⬜ | `docs/perf/BASELINE-1.1.0.md`，含环境指纹 | T10 | 发布 |
-| I7 | 生产就绪报告 | ⬜ | `RELEASE-READINESS-1.1.0.md`，逐条判定阈值并签署 | T12 | 发布 |
-| I8 | **版本重定位** | ⬜ | 当前 1.0.0 会让用户按 GA 预期使用；改标 `1.0.0-alpha`/Technical Preview，GA 锁 1.1.0 | 即刻 | README 首屏声明 |
-| I9 | 发布渠道与签名 | ⬜ | tag 未推、无制品分发渠道，需人工决策 | T12 | 流程确定 |
-
----
-
-## 3. 里程碑门槛（每级要求哪些维度到多少）
-
-| 里程碑 | A 功能 | B 语义 | C 可靠 | D 性能 | E 长稳 | F 生态 | G 安全 | H 工程 | I 文档 |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **当前** | 92 | 85 | 0 | 0 | 5 | 50 | 20 | 40 | 70 |
-| Alpha（已达） | 80 | 70 | — | — | — | — | — | — | 50 |
-| **Beta**（T08+T09 后） | 90 | 95 | 80 | 30 | 30 | 40 | 50 | 70 | 70 |
-| **RC**（T10+T11 后） | 95 | 100 | 95 | 90 | 60 | 90 | 70 | 90 | 85 |
-| **GA**（T12 后） | 100 | 100 | 100 | 100 | 100 | 100 | 100 | 100 | 100 |
-
----
-
-## 4. 关键路径与阻塞
-
-1. **E2/E3 可重建性与网络唯一性是第一阻塞**：E2/E3 已在 `.44/.26/.28` 建成并完成
-   Release 回归及基础 MR/YARN/Spark 验证，但尚无一键重建/恢复脚本；`.26` 还存在外部重复
-   IP/MAC 风险。故障、性能、长稳和完整组件矩阵仍是主要空白。
-2. **SP-04 风险已收敛**：默认端口、普通文件 no-replace 与并发 mkdirs 均已修复；多 JVM、
-   崩溃恢复和真实 Spark local checkpoint 已在 E2 Release 通过。失败竞争者会留下临时 metadata
-   源文件，需纳入作业/运维清理口径；目录 rename 边界仍待验证。
-3. **已触发产品增强**：SP-01/02/03/06A/08B 均成立，需处理 owner/group 名字映射、
-   chown 失败语义和安全口径；Hive 单用户 MR 矩阵虽通过，完成前仍不得声明多用户
-   MR/Hive/YARN 或 Kerberos 受支持。
-4. **零成本可做**：I8 版本重定位——挡住"用户按 GA 预期使用"这类最坏误用。
-
----
-
-## 5. 更新规则
-
-- 每阶段（SPIKE/T08–T12）收尾时，由该阶段 agent 更新「当前」列与证据链接，并在
-  PROGRESS.md 登记本表的变化；
-- **§1 总览表与进度条在 README.md 首页有一份副本，必须同步更新**（含表头的更新日期），
-  两处不一致时以本文件为准；
-- 「当前」百分比必须有可追溯证据（用例 ID / 报告路径 / commit），**不得凭感觉打分**；
-- 权重调整须在发布评审上决定并记录理由，不得为了让数字好看而改权重。
+- Change a status only when adding or linking a report that identifies the environment, commit,
+  commands, test IDs, and result.
+- A partial execution does not verify an entire area.
+- A failure remains visible until a later report reruns the same test ID and records the applicable
+  resolution or an approved accepted-risk reference.
+- Do not copy test steps, environment topology, task history, or report output into this matrix.

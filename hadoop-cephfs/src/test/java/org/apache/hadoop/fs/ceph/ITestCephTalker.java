@@ -48,9 +48,9 @@ import org.junit.Test;
  * CephTalker 对真实 vstart 集群的集成测试（T02 验收标准 2）。
  *
  * <p>门控：环境变量 {@code CEPH_CONTRACT_TEST=1} 时才执行，否则整类 skip，
- * 保证无集群环境 {@code mvn test/verify} 绿色（协作规范 §4）。
+ * 保证无集群环境 {@code mvn test/verify} 绿色（见 AGENTS.md）。
  *
- * <p>集群连接信息以 docs/ENV.md 为准：mon 地址一律经 ceph.conf 读取，
+ * <p>集群连接信息以 docs/environments/E1.md 为准：mon 地址一律经 ceph.conf 读取，
  * 不硬编码。ceph.conf 路径可用系统属性 {@code ceph.conf.file} 或环境变量
  * {@code CEPH_CONF_FILE} 覆盖，默认 vstart 位置。
  *
@@ -84,7 +84,7 @@ public class ITestCephTalker {
     CephTestConfig.applyAuth(conf);
 
     talker = new CephTalker();
-    // URI 无 authority：mon 地址完全来自 ceph.conf（ENV.md §1，勿硬编码）
+    // URI 无 authority：mon 地址完全来自 ceph.conf（docs/environments/E1.md，勿硬编码）
     talker.initialize(URI.create("ceph:///"), conf);
 
     testDir = new Path("/itest-t02-" + System.nanoTime());

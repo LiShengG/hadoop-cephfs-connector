@@ -48,7 +48,7 @@ import org.junit.Test;
 /**
  * FileContext（AbstractFileSystem/CephFs）全链路集成测试（T05）。
  *
- * <p>门控：环境变量 {@code CEPH_CONTRACT_TEST=1}；集群信息以 docs/ENV.md 为准。
+ * <p>门控：环境变量 {@code CEPH_CONTRACT_TEST=1}；集群信息以 docs/environments/E1.md 为准。
  *
  * <p>运行方式：
  * <pre>

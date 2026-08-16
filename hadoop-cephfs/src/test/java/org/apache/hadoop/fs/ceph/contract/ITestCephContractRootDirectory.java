@@ -39,13 +39,13 @@ public class ITestCephContractRootDirectory extends AbstractContractRootDirector
   }
 
   /**
-   * 排除项（书面理由，登记于 PROGRESS.md T06 契约结果表）：
+   * 排除项（当前契约语义见 docs/ARCHITECTURE.md，历史验收见 docs/archive/2026-07.md）：
    *
    * <p>契约基类期望非空根目录 {@code delete("/", false)} 抛 IOException。
    * 本实现按 T03 已验收的根目录保护条款，对 {@code !recursive} 的根目录删除
    * 一律直接返回 false（不触碰任何数据，也不抛异常）——filesystem.md 允许
    * 对根目录做特殊处理（"The root directory may have special handling"），
-   * 且该口径已被 T03 mock 单测与独立验收钉死，按协作规范优先保持既有行为、
+   * 且该口径已被 mock 单测与独立验收固化，按 AGENTS.md 优先保持既有行为、
    * 不为契约测试改动已验收语义。
    *
    * <p>此 override 改为验证本实现的既定语义：返回 false、根仍在、数据不丢。

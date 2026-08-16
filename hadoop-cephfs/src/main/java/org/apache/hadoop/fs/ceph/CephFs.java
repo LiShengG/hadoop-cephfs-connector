@@ -26,7 +26,7 @@ import org.apache.hadoop.fs.DelegateToFileSystem;
 
 /**
  * CephFS 的 {@link org.apache.hadoop.fs.AbstractFileSystem} 实现
- * （FileContext 路径，YARN NodeManager 等使用 —— 架构文档 §2）。
+ * （FileContext 路径，YARN NodeManager 等使用；见 docs/ARCHITECTURE.md）。
  *
  * <p>按 Hadoop 内置 {@code RawLocalFs} / {@code FtpFs} 模式经
  * {@link DelegateToFileSystem} 委托给 {@link CephFileSystem}，零重复逻辑。

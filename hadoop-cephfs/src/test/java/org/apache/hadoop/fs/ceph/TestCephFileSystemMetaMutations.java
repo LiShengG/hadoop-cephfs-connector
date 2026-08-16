@@ -52,7 +52,7 @@ import org.junit.Test;
 import org.mockito.InOrder;
 
 /**
- * mkdirs / delete 全分支 mock 单测（架构文档 §4 表 2、3 与 T02 交接的
+ * mkdirs / delete 全分支 mock 单测（语义见 docs/ARCHITECTURE.md 与
  * "libcephfs mkdirs 末段为已存在文件时静默成功" 陷阱）。
  */
 public class TestCephFileSystemMetaMutations {

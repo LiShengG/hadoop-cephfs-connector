@@ -14,7 +14,7 @@ write_report
 
 cat <<'EOF'
 
-[spike] ── SP-06 B 层清单（需 Kerberized 集群，人工执行并把输出补进 ECO-FINDINGS）──
+[spike] ── SP-06 B 层清单（需 Kerberized 集群，人工执行并整理为日期化报告）──
   1. kinit 后向 YARN 提交一个读写 ceph:// 的作业，记录是否因缺少 Token 失败；
   2. 若成功：确认容器实际用的是哪份 cephx 凭据（节点本地 keyring 路径与权限）；
   3. 验证"另一个 Kerberos 用户在同节点起容器"能否用同一 keyring 取得同等 CephFS 权限

@@ -50,7 +50,7 @@ precheck() {
   mkdir -p "$OUT_DIR" "$LOG_DIR"
   [ -f "$CEPH_CONF" ] || die "ceph.conf 不存在: $CEPH_CONF（先跑 scripts/cluster-up.sh）"
   [ -f "$JNI_DIR/libcephfs_jni.so" ] \
-    || die "缺 JNI 库: $JNI_DIR/libcephfs_jni.so（见 docs/ENV.md §2）"
+    || die "缺 JNI 库: $JNI_DIR/libcephfs_jni.so（见 docs/environments/E1.md）"
   timeout 30 "$CEPH_BUILD/bin/ceph" -c "$CEPH_CONF" -s >/dev/null 2>&1 \
     || die "集群不可达（bin/ceph -s 失败），先跑 scripts/cluster-up.sh 与 smoke-test.sh"
 }
@@ -177,7 +177,7 @@ record() {
 write_report() {
   local draft="$OUT_DIR/ECO-FINDINGS-draft.md"
   {
-    echo "# ECO spike 结论草稿（自动生成，需人工整理后并入 docs/ECO-FINDINGS.md）"
+    echo "# ECO spike 结论草稿（自动生成，需人工整理为 docs/reports/ 中的日期化报告）"
     echo
     echo "- 生成时间：$(date -Is)"
     echo "- 集群：$(timeout 20 "$CEPH_BUILD/bin/ceph" -c "$CEPH_CONF" -v 2>/dev/null | head -1)"

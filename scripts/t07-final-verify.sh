@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# T07 终验（架构文档 §8-M6）：开干净 shell（env -i，不继承会话环境），
+# T07 终验（归档见 docs/archive/2026-07.md）：开干净 shell（env -i，不继承会话环境），
 # 仅按 docs/DEPLOY.md 的步骤操作，从部署包 tar.gz 出发完成
 # ls / put / cat / rm 的 ceph:/// 全流程（FsShell 方式，与 T06 CLI 方案一致）。
 #

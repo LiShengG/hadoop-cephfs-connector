@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# T06 CLI 端到端验证：hadoop fs 全链路（架构文档 §6.2 第 3 级）。
+# T06 CLI 端到端验证：hadoop fs 全链路（策略见 docs/TESTING.md）。
 #
 # 运行时组装说明（任务书工作内容 4，"最省事可行的方式"）：
 #   `hadoop fs` 包装脚本最终 exec 的就是 org.apache.hadoop.fs.FsShell，
@@ -34,7 +34,7 @@ die()  { echo "[e2e] FAIL: $*" >&2; exit 1; }
 
 # ── 0. 前置检查 ─────────────────────────────────────────────────────────────
 [ -f "$CEPH_CONF" ] || die "ceph.conf 不存在: $CEPH_CONF（先跑 scripts/cluster-up.sh）"
-[ -f "$JNI_DIR/libcephfs_jni.so" ] || die "缺 JNI 库: $JNI_DIR/libcephfs_jni.so（见 docs/ENV.md §2）"
+[ -f "$JNI_DIR/libcephfs_jni.so" ] || die "缺 JNI 库: $JNI_DIR/libcephfs_jni.so（见 docs/environments/E1.md）"
 timeout 30 "$CEPH_BUILD/bin/ceph" -c "$CEPH_CONF" -s >/dev/null 2>&1 \
   || die "集群不可达（bin/ceph -s 失败），先跑 scripts/cluster-up.sh 与 smoke-test.sh"
 

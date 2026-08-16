@@ -33,6 +33,6 @@ write_report
 
 echo
 echo "[spike] 下一步："
-echo "  1. 人工整理 $OUT_DIR/ECO-FINDINGS-draft.md → docs/ECO-FINDINGS.md（补复现命令与原始输出）"
-echo "  2. CONFIRMED 项按 TEST-PLAN §13 建缺陷单并回写附录 A"
+echo "  1. 人工整理 $OUT_DIR/ECO-FINDINGS-draft.md → docs/reports/YYYY-MM-DD-e1-ecosystem-spikes.md（补复现命令与原始输出）"
+echo "  2. CONFIRMED 项建跟踪，并更新 docs/KNOWN-LIMITATIONS.md 和当次报告"
 echo "  3. B 层：HADOOP_HOME=... $SPIKE_DIR/sp01b-mr-submit.sh"

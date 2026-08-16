@@ -45,7 +45,7 @@ import org.junit.Test;
 /**
  * CephFileSystem 元数据操作对真实 vstart 集群的集成测试（T03 验收标准 2/3）。
  *
- * <p>门控：环境变量 {@code CEPH_CONTRACT_TEST=1}；集群信息以 docs/ENV.md 为准
+ * <p>门控：环境变量 {@code CEPH_CONTRACT_TEST=1}；集群信息以 docs/environments/E1.md 为准
  * （mon 地址经 ceph.conf 读取，不硬编码）。
  *
  * <p>文件的创建借助独立 {@link CephTalker}（T03 中 create() 为 T04 留桩）。

@@ -56,7 +56,7 @@ import org.mockito.ArgumentCaptor;
 /**
  * CephFileSystem 生命周期 + 查询类 + setter 类的 mock 单测（无集群）。
  *
- * <p>覆盖架构文档 §4 表条目：4（setReplication）、6（uid→用户名映射）、
+ * <p>覆盖 docs/ARCHITECTURE.md 的语义：setReplication、uid→用户名映射、
  * 7（workingDir 纯 Java 维护）、8（时间戳毫秒直传）。
  * mkdirs/delete/rename 见 {@link TestCephFileSystemMetaMutations} /
  * {@link TestCephFileSystemMetaRename}。
