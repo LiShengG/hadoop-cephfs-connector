@@ -61,7 +61,12 @@
 | identity | 20 | 6 | 11 | 1 | 6 | 6 | 0 |
 | append | 5 | 1 | 3 | 1 | 0 | 1 | 1 |
 | mkdirs | 10 | 0 | 7 | 1 | 0 | 3 | 0 |
-| **合计** | **113** | **17** | **65** | **20** | **8** | **29** | **12** |
+| path-entrypoint | 10 | 0 | 9 | 3 | 0 | 0 | 0 |
+| metadata | 13 | 0 | 12 | 3 | 0 | 1 | 0 |
+| read | 10 | 0 | 9 | 1 | 0 | 1 | 0 |
+| status-defaults | 8 | 0 | 7 | 1 | 0 | 0 | 1 |
+| block-location | 14 | 0 | 12 | 5 | 0 | 2 | 0 |
+| **合计** | **168** | **17** | **114** | **33** | **8** | **33** | **13** |
 
 一行可以同时带多个状态，因此各状态列之和不等于行数。这些数字应当从下面的表格重新算出，而不是手工编辑。
 
@@ -243,6 +248,96 @@ append 的起始位置同样源于 open 时刻的长度快照，该决策条件�
 | 100 层深的树 | 创建成功且不栈溢出 | 未验证 | FN-05 | NOT_RUN |
 | 官方 `FileContext` create-mkdir 套件 | 通过 | 未验证 | CT-03 | NOT_RUN |
 | `FileSystem` 与 `FileContext` 的通用操作大套件 | 通过 | 未验证 | CT-01, CT-02 | NOT_RUN |
+
+## path-entrypoint
+
+本轴记录接入层与路径转换语义。具体配置键名与默认值由源码中的配置常量拥有，不在这里重复展开。
+
+| 决策条件 | 期望行为 | 当前行为 | 用例 ID | 状态 |
+|---|---|---|---|---|
+| `FileSystem` scheme 与根 URI | scheme 为 `ceph`，文件系统 URI 归一化到根 | 符合 | — | UNIT |
+| 初始化 URI 带 authority 与非根 path | authority 保留；初始化 path 不成为文件系统根 | 符合 | — | UNIT |
+| `FileSystem` 服务发现 | 不显式配置实现类时仍能加载本实现 | 符合 | — | CLUSTER |
+| `FileContext` 入口 | 经 `CephFs` 委托主实现，避免双入口语义漂移 | 符合 | — | UNIT + CLUSTER |
+| `FileContext` 使用 authorityless `ceph:///` | 不声明默认端口，不被错误补端口后判为 wrong FS | 符合 | — | UNIT + CLUSTER |
+| 初始工作目录 | 由 Hadoop 用户/home推导 | 符合 | — | UNIT |
+| 设置工作目录 | 绝对路径直接采用；相对路径按当前工作目录拼接 | 符合 | — | UNIT |
+| 绑定层收到 null、空路径或相对路径 | 转成 CephFS 根下的绝对路径 | 符合 | UT-07 | UNIT |
+| 绑定层收到带 scheme/authority 的路径 | 剥离 scheme 与 authority，只保留 CephFS 内部路径 | 符合 | UT-07 | UNIT |
+| 路径含空格、URI 编码或多余斜杠 | 按 Hadoop `Path` 归一化后的路径访问 CephFS | 符合 | UT-07 | UNIT |
+
+## metadata
+
+本轴只补充查询与时间属性语义。owner、group、permission 的身份相关条件仍归 identity 轴所有。
+
+| 决策条件 | 期望行为 | 当前行为 | 用例 ID | 状态 |
+|---|---|---|---|---|
+| 文件 status | 上报文件长度、时间、块大小、复制数视图与 qualified path | 符合 | — | UNIT |
+| 目录 status | 标识为目录，长度为 0 | 符合 | — | UNIT |
+| status 目标不存在 | `FileNotFoundException` | 符合 | — | UNIT + CONTRACT |
+| 查询路径的祖先是普通文件 | `FileNotFoundException` | 符合（无断言） | UT-02 | NOT_RUN |
+| `listStatus` 目标是目录 | 返回每个子项的 status | 符合 | — | UNIT + CLUSTER |
+| `listStatus` 目标是空目录 | 返回空数组 | 符合 | — | UNIT |
+| `listStatus` 目标是文件 | 返回只包含该文件 status 的数组 | 符合 | — | UNIT |
+| `listStatus` 目标不存在 | `FileNotFoundException` | 符合 | — | UNIT |
+| `setTimes` 只给 mtime | 只修改 mtime | 符合 | — | UNIT + CLUSTER |
+| `setTimes` 只给 atime | 只修改 atime | 符合 | — | UNIT |
+| `setTimes` 同时给 mtime 与 atime | 两者都修改 | 符合 | — | UNIT |
+| `setTimes` 两个时间都为 `-1` | no-op，不调用底层属性修改 | 符合 | — | UNIT |
+| `setTimes` 的底层属性修改失败 | 原错误透出，不改写成其他 Hadoop 异常 | 符合 | — | UNIT |
+
+## read
+
+本轴补充输入流内部语义。open 后长度快照导致的可见性限制仍归 visibility 轴所有。
+
+| 决策条件 | 期望行为 | 当前行为 | 用例 ID | 状态 |
+|---|---|---|---|---|
+| open 目标是文件 | 以只读 fd 打开，并以 open 时刻长度初始化输入流 | 符合 | — | UNIT |
+| open 目标是目录 | `FileNotFoundException` | 符合 | — | UNIT |
+| 顺序读跨缓冲区 | 按序返回数据，到 EOF 后返回 `-1` | 符合 | — | UNIT |
+| seek 到当前缓冲区内 | 只移动 Java 侧位置，不重新读底层 fd | 符合 | UT-13 | UNIT |
+| seek 到当前缓冲区外 | 移动位置并使旧缓冲失效 | 符合 | UT-13 | UNIT |
+| seek 到负数或 open 时刻 EOF 之后 | `EOFException` | 符合 | — | UNIT |
+| positioned read | 从给定 offset 读取，且不改变当前流位置 | 符合 | — | UNIT + CLUSTER |
+| positioned read 位于 open 时刻 EOF 及之后 | 返回 `-1` | 符合（无断言） | UT-13 | NOT_RUN |
+| `available` 与 `seekToNewSource` | `available` 按剩余快照长度计算；`seekToNewSource` 返回 `false` | 符合 | — | UNIT |
+| 输入流 close | 释放 fd 且幂等；close 后 read/seek 以 `IOException` 拒绝 | 符合 | UT-12 | UNIT |
+
+## status-defaults
+
+本轴记录容量、服务默认值、内容汇总与能力声明语义。实际 Ceph 数据保护仍由 pool 策略控制。
+
+| 决策条件 | 期望行为 | 当前行为 | 用例 ID | 状态 |
+|---|---|---|---|---|
+| `getStatus(null)` | 查询根路径，并把 statfs 映射为 capacity/used/remaining | 符合 | — | UNIT |
+| `getStatus(path)` | 查询给定路径所在文件系统的容量视图 | 符合 | FN-29 | UNIT + CLUSTER |
+| statfs 的 fragment size 不可用 | 回退到 block size 计算容量 | 符合 | UT-04 | UNIT |
+| 带 path 的默认块大小查询 | 与全局默认块大小一致 | 符合 | — | UNIT |
+| 服务默认值中的 checksum | 声明为不可用的 checksum 类型 | 符合 | — | UNIT |
+| 服务默认值中的块、复制数与缓冲视图 | 来自连接器配置与 Hadoop 服务默认值模型 | 符合 | — | UNIT |
+| `getContentSummary` | 复用基类遍历 list/status 得到汇总 | 符合 | FN-24 | UNIT |
+| path capability | 声明支持 append 与权限；其他能力沿用基类结果 | 符合（无断言） | — | GAP |
+
+## block-location
+
+Hadoop block location 在本连接器中只是调度提示，不表示 Hadoop 控制 Ceph 副本或放置策略。
+
+| 决策条件 | 期望行为 | 当前行为 | 用例 ID | 状态 |
+|---|---|---|---|---|
+| file status 为 null | 返回 null | 符合 | UT-09 | UNIT |
+| start 或 len 为负数 | `IllegalArgumentException` | 符合 | UT-09 | UNIT |
+| 目标是目录、空文件、零长度请求或 start 已到 EOF | 返回空数组 | 符合 | UT-09 | UNIT + CLUSTER |
+| 请求范围超过文件末尾或 len 极大 | 末端钳制到文件长度且不溢出 | 符合 | UT-09 | UNIT + CLUSTER |
+| 范围跨 Ceph extent/object 边界 | 按 extent 剩余长度切分 block location | 符合 | — | UNIT + CLUSTER |
+| start 非对齐或落在尾块内 | 首块和尾块长度按真实范围裁剪 | 符合 | — | UNIT + CLUSTER |
+| extent 带 OSD id | 解析为 host/name 数组 | 符合 | — | UNIT + CLUSTER |
+| 同一次调用内重复 OSD | OSD 地址只解析一次 | 符合 | — | UNIT |
+| rack/topology 信息 | 不声明机架路径 | 符合 | — | UNIT |
+| OSD 地址解析失败、地址为空或 OSD 列表为空 | 降级为 `localhost`，不让调用失败 | 符合 | UT-08 | UNIT |
+| extent 查询失败 | 降级为 `localhost`，并按 block size 步进 | 符合 | UT-08 | UNIT |
+| extent 长度非法 | 按单个 extent 失败处理并降级 | 符合（无断言） | UT-08 | NOT_RUN |
+| 临时 fd 生命周期 | 成功、降级或异常路径都关闭临时 fd | 符合 | UT-08 | UNIT |
+| 一个 extent 返回多个 OSD | 每个 OSD 都进入 host/name 数组 | 符合（无断言） | FN-25 | NOT_RUN |
 
 ## 维护规则
 
