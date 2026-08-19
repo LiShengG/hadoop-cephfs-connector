@@ -104,9 +104,10 @@ import pathlib
 import re
 import sys
 
-files = [pathlib.Path('docs/TEST-CASES.md'), pathlib.Path('docs/TEST-CASES-ECO.md')]
-heading = re.compile(r'^## ([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+):\s+.+$')
-required = ('Purpose', 'Preconditions', 'Steps', 'Expected result', 'Required environment')
+files = [pathlib.Path('docs/TEST-PLAN.md'), pathlib.Path('docs/TEST-CASES-ECO.md')]
+heading = re.compile(r'^## ([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+):\s+(.+)$')
+priority = re.compile(r'\[P[0-2](?: [a-z]+)?\]$')
+required = ('Expected result', 'Required environment')
 definitions: dict[str, tuple[pathlib.Path, int]] = {}
 errors: list[str] = []
 
@@ -117,6 +118,11 @@ for path in files:
         match = heading.match(line)
         if match:
             positions.append((index, match.group(1)))
+            # The heading is the only place a case states its priority.
+            if not priority.search(match.group(2).strip()):
+                errors.append(
+                    f'{path}:{index + 1}: {match.group(1)} heading has no [P0]/[P1]/[P2] tag'
+                )
     for position, (index, test_id) in enumerate(positions):
         if test_id in definitions:
             previous = definitions[test_id]
@@ -242,10 +248,119 @@ then
   fail 'archive format validation failed'
 fi
 
+if ! python3 <<'PY'
+from __future__ import annotations
+
+import pathlib
+import re
+import sys
+
+matrix = pathlib.Path('docs/SEMANTICS-MATRIX.md')
+case_files = [pathlib.Path('docs/TEST-PLAN.md'), pathlib.Path('docs/TEST-CASES-ECO.md')]
+
+heading = re.compile(r'^## ([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+):\s')
+delegation = (
+    '- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) '
+    'rows citing this ID.'
+)
+
+defined: set[str] = set()
+# A case delegates when its only expected result is the pointer above; the matrix then owns it.
+delegating: dict[str, tuple[pathlib.Path, int]] = {}
+for path in case_files:
+    current: str | None = None
+    current_line = 0
+    for lineno, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+        match = heading.match(line)
+        if match:
+            current = match.group(1)
+            current_line = lineno
+            defined.add(current)
+        elif line.strip() == delegation and current is not None:
+            delegating[current] = (path, current_line)
+
+errors: list[str] = []
+cited_id = re.compile(
+    r'\b((?:UT|CT|FN|REL-F|PERF|SOAK|COMPAT|SEC|OPS|NEG|SP|ECO-[A-Z]+)-[0-9]+)\b'
+)
+allowed_status = {'UNIT', 'CONTRACT', 'CLUSTER', 'SPIKE', 'NOT_RUN', 'GAP'}
+# Current-behavior vocabulary defined by the matrix legend.
+MATCHES = '\u7b26\u5408'
+UNASSERTED = '\u65e0\u65ad\u8a00'
+UNVERIFIED = '\u672a\u9a8c\u8bc1'
+EMPTY_CASE = '\u2014'
+owned: set[str] = set()
+seen_status = False
+
+matrix_lines = matrix.read_text(encoding='utf-8').splitlines()
+for index, line in enumerate(matrix_lines):
+    lineno = index + 1
+    if not line.startswith('|'):
+        continue
+    cells = [cell.strip() for cell in line.strip('|').split('|')]
+    for test_id in cited_id.findall(line):
+        if test_id not in defined:
+            errors.append(f'{matrix}:{lineno}: cites undefined case ID: {test_id}')
+    # Only the five-column semantics rows carry a status; skip the legend tables. A header row is
+    # the line directly above a separator, which keeps this check independent of the header wording.
+    following = matrix_lines[index + 1] if index + 1 < len(matrix_lines) else ''
+    if len(cells) != 5 or cells[0].startswith('---') or following.startswith('|---'):
+        continue
+    owned.update(cited_id.findall(cells[3]))
+    tokens = {token for token in re.findall(r'[A-Z_]{3,}', cells[4])}
+    if not tokens:
+        errors.append(f'{matrix}:{lineno}: row has no status')
+        continue
+    seen_status = True
+    unknown = tokens - allowed_status
+    if unknown:
+        errors.append(f'{matrix}:{lineno}: unknown status: {", ".join(sorted(unknown))}')
+    # The status column and the current-behavior column must agree with the legend, or the
+    # gap counts are meaningless.
+    behavior = cells[2]
+    has_case = cells[3] != EMPTY_CASE
+    asserted = bool(tokens & {'UNIT', 'CONTRACT', 'CLUSTER'})
+    if 'GAP' in tokens and has_case:
+        errors.append(f'{matrix}:{lineno}: GAP means no case ID, but this row cites one')
+    if 'NOT_RUN' in tokens and not has_case:
+        errors.append(f'{matrix}:{lineno}: NOT_RUN means a case ID owns it, but none is cited')
+    if behavior.startswith(MATCHES) and UNASSERTED not in behavior and not asserted:
+        errors.append(
+            f'{matrix}:{lineno}: behavior claims an enforced match without '
+            f'UNIT, CONTRACT, or CLUSTER'
+        )
+    if (UNASSERTED in behavior or behavior.startswith(UNVERIFIED)) and asserted:
+        errors.append(
+            f'{matrix}:{lineno}: behavior claims no assertion while the status names one'
+        )
+
+# A delegating case has no expectation of its own, so at least one row must supply one.
+for test_id, (path, lineno) in sorted(delegating.items()):
+    if test_id not in owned:
+        errors.append(
+            f'{path}:{lineno}: {test_id} delegates its expected result, but no '
+            f'{matrix.name} row cites it'
+        )
+
+if not defined:
+    errors.append('no case definitions were parsed')
+if not seen_status:
+    errors.append('no semantics rows were parsed')
+if errors:
+    print('\n'.join(errors), file=sys.stderr)
+    raise SystemExit(1)
+print(
+    f'[check-docs] semantics matrix references resolved; '
+    f'{len(delegating)} case(s) delegate their expected result'
+)
+PY
+then
+  fail 'semantics matrix references or expected-result delegation are invalid'
+fi
+
 legacy_paths=(
   "00-"$'顶层架构设计.md'
   "01-"$'协作规范.md'
-  "TEST-"'PLAN.md'
   "ENV"'.md'
   "E2-"'ENV.md'
   "E3-"'ENV.md'

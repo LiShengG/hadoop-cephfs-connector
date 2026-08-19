@@ -108,7 +108,7 @@ not a statement that Hadoop controls Ceph replication.
   [LIM-004](KNOWN-LIMITATIONS.md#lim-004-file-checksum-is-unavailable).
 
 Behavioral details are protected by source tests. Stable test IDs and execution environments are
-defined in [TEST-CASES.md](TEST-CASES.md) and [TEST-CASES-ECO.md](TEST-CASES-ECO.md).
+defined in [TEST-PLAN.md](TEST-PLAN.md) and [TEST-CASES-ECO.md](TEST-CASES-ECO.md).
 
 ## 6. Packaging boundary
 

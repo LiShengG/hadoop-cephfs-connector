@@ -107,3 +107,20 @@ and, when necessary, retain their evidence in a dated report.
   guard or documented support boundary
 - Tracking: ECO-MIX-01, ECO-MIX-02
 - Last verified: [2026-08-15 E3 ecosystem](reports/2026-08-15-e3-distributed-ecosystem.md)
+
+## LIM-009: Replacing rename is not atomic
+
+- Status: OPEN
+- Affected scope: `FileContext` rename with `Options.Rename.OVERWRITE`, commit protocols that publish
+  a result by overwriting an existing path
+- Trigger: a caller requests an overwriting rename and the destination already exists
+- Impact: the connector delegates to the base class, whose default implementation removes the
+  destination before renaming the source onto it; the destination is therefore transiently absent, and
+  a crash or a failing rename inside that window leaves the destination gone while the source remains
+- Workaround: publish through a no-replace rename onto a fresh path, which the connector claims
+  atomically, and remove the previous path afterwards; do not treat an overwriting rename as a
+  publish-or-nothing step
+- Planned resolution: decide whether an overwriting rename warrants a connector-side atomic strategy or
+  a documented support boundary, then cover FN-31
+- Tracking: FN-31, CT-02
+- Last verified: connector delegation read from source; no dated report covers the base-class window

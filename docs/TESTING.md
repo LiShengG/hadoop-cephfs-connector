@@ -31,10 +31,19 @@ results are maintained in [READINESS.md](READINESS.md) and dated [reports/](repo
 
 ## Test definitions
 
-- Core test IDs are defined in [TEST-CASES.md](TEST-CASES.md).
+- Core test IDs are defined in [TEST-PLAN.md](TEST-PLAN.md).
 - Ecosystem and spike IDs are defined in [TEST-CASES-ECO.md](TEST-CASES-ECO.md).
 - An execution report cites the IDs it ran; it does not reproduce the complete steps.
 - An ID is defined exactly once and remains stable when its implementation or evidence changes.
+- A definition carries its heading, its gate priority tag, an expected result, and a required
+  environment. It adds preconditions or steps only where they are not implied by the heading.
+- A definition without explicit steps is executed as: establish the required environment, perform the
+  operation named by the heading, then record inputs, outputs, errors, resource state, and cleanup.
+- [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) owns expected behavior per decision condition. A case
+  whose expectation is decision-level delegates to it instead of restating it, and its expected
+  result is then the union of the matrix rows citing that case.
+- Suite-level, performance, spike, and ecosystem cases state their own expected results, because
+  their expectations are not decision-level.
 
 ## Execution rules
 
