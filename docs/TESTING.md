@@ -39,9 +39,10 @@ results are maintained in [READINESS.md](READINESS.md) and dated [reports/](repo
   environment. It adds preconditions or steps only where they are not implied by the heading.
 - A definition without explicit steps is executed as: establish the required environment, perform the
   operation named by the heading, then record inputs, outputs, errors, resource state, and cleanup.
-- [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) owns expected behavior per decision condition. A case
-  whose expectation is decision-level delegates to it instead of restating it, and its expected
-  result is then the union of the matrix rows citing that case.
+- [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) owns expected behavior, its basis, current-behavior
+  classification, exact guards, and structural Coverage per decision condition. Coverage does not
+  carry execution state. A case whose expectation is decision-level delegates to the matrix instead
+  of restating it, and its expected result is then the union of the rows citing that case.
 - Suite-level, performance, spike, and ecosystem cases state their own expected results, because
   their expectations are not decision-level.
 

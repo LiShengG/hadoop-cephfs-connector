@@ -13,7 +13,9 @@ for other writers.
 
 For a regular-file no-replace operation, create an MDS hard link at the destination as the atomic
 claim, then remove the source name. Preserve the existing directory path because directories cannot
-be hard-linked.
+be hard-linked. If the source was concurrently removed after a successful claim, keep the destination
+and treat the operation as successful. For any other source-removal failure, attempt to remove the
+new destination and surface the original failure, retaining any rollback failure as suppressed detail.
 
 ## Alternatives considered
 

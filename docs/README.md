@@ -24,8 +24,9 @@
 - Source code, tests, and `pom.xml` own API signatures, types, configuration defaults, dependency
   versions, and executable behavior.
 - `PROGRESS.md` owns active work and blockers. `READINESS.md` owns current release-gate status.
-- `SEMANTICS-MATRIX.md` owns expected behavior per decision condition. The case files own case
-  identity, priority, and required environment.
+- `SEMANTICS-MATRIX.md` owns expected behavior, basis, classification, guards, and structural Coverage
+  per decision condition. The case files own case identity, priority, and required environment;
+  reports and `READINESS.md` own execution state.
 - Environment documents own topology and safety boundaries, not experiment results.
 - Reports record dated executions. ADRs record architectural reasons. Archives contain one-line
   resolved-item indexes only.
