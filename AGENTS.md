@@ -32,14 +32,19 @@
 - Record test executions in `docs/reports/`.
 - Do not copy complete historical text into the archive.
 
-## Experiment journal
+## Structured catalog and experiment journal
 
-- After each experiment, append a concise entry to `EXPERIMENTS.md` immediately above its stable
-  append marker using `apply_patch`.
-- Do not read earlier journal entries merely to append a new one. Read them only when the active task
+- `docs/catalog.ndjson` is the canonical structured source for migrated project state, readiness,
+  semantics, and experiment-journal records. Use `scripts/docs-catalog.py show` or `query` instead of
+  reading the whole catalog when only a few records are needed.
+- After each experiment, append one concise `run` record to `docs/catalog.ndjson` using `apply_patch`,
+  then run `python3 scripts/docs-catalog.py validate` immediately.
+- Identify the tested revision with `commit`, or use `worktree_base` plus `dirty: true` before the
+  experiment is committed. Only migrated historical runs may use `revision_unknown: true`.
+- Do not read earlier run records merely to append a new one. Query them only when the active task
   explicitly requires historical comparison or analysis.
-- The journal is an operational log. Release-gate evidence still requires the dated report defined
-  by `docs/TESTING.md`.
+- Run records are the operational journal. Release-gate evidence still requires the dated report
+  defined by `docs/TESTING.md`.
 
 ## Verification
 

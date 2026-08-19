@@ -2,14 +2,16 @@
 
 This file defines stable core test IDs and the verification each one still requires. It is a plan,
 not a record of existing tests: most definitions here have no automated test yet, and an ID carries
-no result until a dated report cites it. Execution results belong in dated reports; current gate
-status belongs in `READINESS.md`. The detailed ecosystem cases are canonical in `TEST-CASES-ECO.md`.
+no result until a run record or dated report cites it. Execution observations belong in catalog
+`run` records and dated reports; current gate status belongs in explicit catalog `readiness_area`
+records. The detailed ecosystem cases are canonical in `TEST-CASES-ECO.md`.
 
 Priorities: P0 blocks its gate; P1 is required; P2 requires an explicit support conclusion.
 
 A case whose expected result is a decision-level filesystem semantic does not state it here. It
-delegates to [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md), which owns that expectation and states it
-once, per decision condition.
+delegates to the semantic baseline: migrated records in [catalog.ndjson](catalog.ndjson), or remaining
+rows indexed by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md). The `SEMANTIC-BASELINE` marker below means
+the record or row citing that case ID; the baseline states each condition once.
 
 **Group: Unit semantics**
 
@@ -28,7 +30,7 @@ once, per decision condition.
 ## UT-03: normalizeLayoutSize 边界：0、1、64K-1、64K、64K+1、Long.MAX_VALUE、负数 [P1]
 
 - Preconditions: Implementation or test basis: `normalizeLayoutSize`.
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: No cluster
 
 ## UT-04: getStatus 的 frsize=0/bsize=0/超大 blocks（PB 级）溢出 [P1]
@@ -40,13 +42,13 @@ once, per decision condition.
 ## UT-05: setOwner：数字 uid+gid / 仅 uid / 非数字 / 空串 / null [P1]
 
 - Preconditions: Implementation or test basis: `setOwner`.
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: No cluster
 
 ## UT-06: toFileStatus 权限位：setuid/setgid/sticky/0777 [P1]
 
 - Preconditions: Implementation or test basis: `toFileStatus`.
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: No cluster
 
 ## UT-07: pathString：null、空、相对路径、含空格/UTF-8/%/#、ceph://host/x [P1]
@@ -70,19 +72,19 @@ once, per decision condition.
 ## UT-10: CephOutputStream.writeFully 部分写循环：底层每次只写 1 字节 / 返回 0 / 返回 > 请求数 [P1]
 
 - Preconditions: Implementation or test basis: `writeFully`.
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: No cluster
 
 ## UT-11: CephOutputStream.close 失败路径：flush 抛异常 + close 也抛 [P1]
 
 - Preconditions: Implementation or test basis: `close`.
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: No cluster
 
 ## UT-12: 流关闭后再 write/read/seek/getPos/hsync [P1]
 
 - Preconditions: Implementation or test basis: `ensureOpen`.
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: No cluster
 
 ## UT-13: CephInputStream 缓冲边界：seek 到缓冲头/尾/尾+1、跨缓冲读、read(pos,...) 越界 [P1]
@@ -204,27 +206,27 @@ once, per decision condition.
 
 ## FN-05: 100 层深目录的 mkdirs/递归 delete/rename [P1]
 
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: E2
 
 ## FN-06: 特殊文件名：空格、UTF-8 中文、%20、#、+、:、单引号 [P1]
 
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: E2
 
 ## FN-07: 文件名 255 字节上限与超限 [P1]
 
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: E2
 
 ## FN-08: 路径总长接近 4096 [P1]
 
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: E2
 
 ## FN-09: 空文件、稀疏写（seek 后写，中间空洞） [P2]
 
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: E2
 
 ## FN-10: 5 万文件并发打开（不关闭）后统一关闭 [P1]
@@ -234,42 +236,42 @@ once, per decision condition.
 
 ## FN-11: 写方 append + 读方已打开流：读方能否看到新数据 [P0]
 
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: E2
 
 ## FN-12: 写方 hflush/hsync 后，新开的 reader 能否读到 [P0]
 
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: E2
 
 ## FN-13: hsync 后 kill -9 客户端 [P0]
 
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: E2
 
 ## FN-14: 未 flush 即 kill -9 [P1]
 
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: E2
 
 ## FN-15: 并发 rename 竞态：两线程同时 rename 同一 src [P1]
 
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: E2
 
 ## FN-16: 递归 delete 期间并发创建子文件 [P1]
 
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: E2
 
 ## FN-17: 并发 create 同一路径（overwrite=false） [P1]
 
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: E2
 
 ## FN-18: rename 目录到自身子树 / 到已存在目录 / 到已存在文件 [P1]
 
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: E2
 
 ## FN-19: 32 线程共享同一 CephFileSystem 混合读写 30 min [P1]
@@ -284,12 +286,12 @@ once, per decision condition.
 
 ## FN-21: 多 UGI（doAs 三个用户）访问 [P1]
 
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: E2
 
 ## FN-22: ceph.root.dir=/tenantA 子目录挂载全功能 [P1]
 
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: E2
 
 ## FN-23: Trash：fs.trash.interval>0 下 -rm [P1]
@@ -337,7 +339,7 @@ once, per decision condition.
 - Preconditions: Implementation or test basis: `CephFileSystem#rename(Path, Path, Options.Rename...)` 在 overwrite 分支委托 `super.rename`。
 - Steps: 让独立 observer 连续读取 dst，并在基类 delete 与后续 rename 之间注入失败或终止
   客户端；分别记录顺序最终状态、transient ENOENT 与恢复后的 src/dst 状态。
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: E2
 
 **Group: Reliability and failure injection**
@@ -617,12 +619,12 @@ once, per decision condition.
 
 ## SEC-07: hadoop fs -chown user:group（非数字） [P1]
 
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: E2
 
 ## SEC-08: -chmod 全权限位（含 setuid/setgid/sticky） [P1]
 
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: E2
 
 ## SEC-09: 依赖 CVE 扫描 [P1]
@@ -691,7 +693,7 @@ once, per decision condition.
 
 ## NEG-01: setReplication [P1]
 
-- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
+- Expected result: `SEMANTIC-BASELINE` entries citing this ID.
 - Required environment: E2
 
 ## NEG-02: concat / truncate [P1]

@@ -122,3 +122,4 @@ The connector jar does not embed Hadoop or the Ceph Java binding. `libcephfs.jar
 - [ADR-0002: Package the Ceph Java and JNI binding separately](adr/0002-package-ceph-java-and-jni-separately.md)
 - [ADR-0003: Use no default port for authorityless Ceph URIs](adr/0003-use-no-default-port-for-authorityless-uri.md)
 - [ADR-0004: Provide atomic no-replace rename for regular files](adr/0004-atomic-no-replace-for-regular-files.md)
+- [ADR-0005: Use a structured documentation catalog and HTTP projection](adr/0005-structured-documentation-catalog-and-viewer.md) (proposed)

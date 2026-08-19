@@ -248,25 +248,56 @@ then
   fail 'archive format validation failed'
 fi
 
+if ! python3 scripts/docs-catalog.py validate; then
+  fail 'structured documentation catalog validation failed'
+fi
+
+if ! python3 -m unittest scripts.tests.test_docs_catalog scripts.tests.test_docs_viewer; then
+  fail 'structured documentation tooling tests failed'
+fi
+
+if command -v node >/dev/null 2>&1; then
+  if ! node --check docs/viewer/app.js; then
+    fail 'viewer JavaScript syntax validation failed with Node.js'
+  fi
+elif command -v jrunscript >/dev/null 2>&1; then
+  if ! jrunscript -J-Dnashorn.args=--language=es6 -e '
+    var Files = Java.type("java.nio.file.Files");
+    var Paths = Java.type("java.nio.file.Paths");
+    var StandardCharsets = Java.type("java.nio.charset.StandardCharsets");
+    var engine = new javax.script.ScriptEngineManager().getEngineByName("nashorn");
+    if (engine === null) { throw new Error("Nashorn engine is unavailable"); }
+    var source = new java.lang.String(
+      Files.readAllBytes(Paths.get("docs/viewer/app.js")), StandardCharsets.UTF_8
+    );
+    engine.compile(source);
+  '; then
+    fail 'viewer JavaScript syntax validation failed with Nashorn'
+  fi
+else
+  fail 'viewer JavaScript syntax validation requires node or jrunscript'
+fi
+
 if ! python3 <<'PY'
 from __future__ import annotations
 
 from collections import Counter
+import json
 import pathlib
 import re
 import sys
 
 matrix = pathlib.Path('docs/SEMANTICS-MATRIX.md')
+catalog = pathlib.Path('docs/catalog.ndjson')
 case_files = [pathlib.Path('docs/TEST-PLAN.md'), pathlib.Path('docs/TEST-CASES-ECO.md')]
 
 heading = re.compile(r'^## ([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+):\s')
 delegation = (
-    '- Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) '
-    'rows citing this ID.'
+    '- Expected result: `SEMANTIC-BASELINE` entries citing this ID.'
 )
 
 defined: set[str] = set()
-# A case delegates when its only expected result is the pointer above; the matrix then owns it.
+# A case delegates when its only expected result is the pointer above; the semantic baseline owns it.
 delegating: dict[str, tuple[pathlib.Path, int]] = {}
 for path in case_files:
     current: str | None = None
@@ -299,7 +330,57 @@ semantic_axes = {
     'block-location',
 }
 computed: dict[str, Counter[str]] = {axis: Counter() for axis in semantic_axes}
+expected_inventory = {
+    'rename': {'rows': 27, 'UNIT': 18, 'CONTRACT': 4, 'CLUSTER': 6, 'SPIKE': 1, 'NONE': 8},
+    'create': {'rows': 21, 'UNIT': 11, 'CONTRACT': 2, 'CLUSTER': 1, 'SPIKE': 0, 'NONE': 10},
+    'delete': {'rows': 10, 'UNIT': 7, 'CONTRACT': 2, 'CLUSTER': 1, 'SPIKE': 0, 'NONE': 3},
+    'sync': {'rows': 16, 'UNIT': 7, 'CONTRACT': 3, 'CLUSTER': 0, 'SPIKE': 0, 'NONE': 8},
+    'visibility': {'rows': 5, 'UNIT': 1, 'CONTRACT': 1, 'CLUSTER': 1, 'SPIKE': 1, 'NONE': 1},
+    'identity': {'rows': 20, 'UNIT': 11, 'CONTRACT': 0, 'CLUSTER': 1, 'SPIKE': 6, 'NONE': 6},
+    'append': {'rows': 5, 'UNIT': 3, 'CONTRACT': 0, 'CLUSTER': 1, 'SPIKE': 0, 'NONE': 2},
+    'mkdirs': {'rows': 10, 'UNIT': 7, 'CONTRACT': 1, 'CLUSTER': 0, 'SPIKE': 0, 'NONE': 3},
+    'path-entrypoint': {'rows': 10, 'UNIT': 9, 'CONTRACT': 0, 'CLUSTER': 3, 'SPIKE': 0, 'NONE': 0},
+    'metadata': {'rows': 13, 'UNIT': 12, 'CONTRACT': 1, 'CLUSTER': 2, 'SPIKE': 0, 'NONE': 1},
+    'read': {'rows': 10, 'UNIT': 9, 'CONTRACT': 0, 'CLUSTER': 1, 'SPIKE': 0, 'NONE': 1},
+    'status-defaults': {'rows': 8, 'UNIT': 7, 'CONTRACT': 0, 'CLUSTER': 1, 'SPIKE': 0, 'NONE': 1},
+    'block-location': {'rows': 14, 'UNIT': 12, 'CONTRACT': 0, 'CLUSTER': 5, 'SPIKE': 0, 'NONE': 2},
+}
 current_axis: str | None = None
+catalog_semantics = 0
+
+for lineno, line in enumerate(catalog.read_text(encoding='utf-8').splitlines(), 1):
+    if not line.strip():
+        continue
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError as exc:
+        errors.append(f'{catalog}:{lineno}: invalid JSON: {exc.msg}')
+        continue
+    if record.get('kind') != 'semantic':
+        continue
+    catalog_semantics += 1
+    axis = record.get('axis')
+    if axis not in semantic_axes:
+        errors.append(f'{catalog}:{lineno}: unknown semantic axis: {axis}')
+        continue
+    if axis != 'rename':
+        errors.append(f'{catalog}:{lineno}: only rename is migrated in this experiment')
+    coverage = set(record.get('coverage', []))
+    computed[axis]['rows'] += 1
+    computed[axis].update(coverage & allowed_coverage)
+    computed[axis]['migrated_rows'] += 1
+    classification = record.get('classification')
+    if classification in allowed_classification:
+        computed[axis][classification] += 1
+    guards = ' '.join(str(value) for value in record.get('guards', []))
+    owned.update(cited_id.findall(guards))
+    for test_id in cited_id.findall(guards):
+        if test_id not in defined:
+            errors.append(f'{catalog}:{lineno}: cites undefined case ID: {test_id}')
+    seen_coverage = True
+
+if catalog_semantics != 27:
+    errors.append(f'{catalog}: expected 27 migrated rename records, found {catalog_semantics}')
 
 matrix_lines = matrix.read_text(encoding='utf-8').splitlines()
 for index, line in enumerate(matrix_lines):
@@ -318,6 +399,9 @@ for index, line in enumerate(matrix_lines):
     # A header row is directly above a separator, keeping this independent of translated headings.
     following = matrix_lines[index + 1] if index + 1 < len(matrix_lines) else ''
     if len(cells) not in {5, 8} or cells[0].startswith('---') or following.startswith('|---'):
+        continue
+    if current_axis == 'rename':
+        errors.append(f'{matrix}:{lineno}: rename conditions must be catalog records, not table rows')
         continue
 
     migrated = len(cells) == 8
@@ -407,116 +491,54 @@ for index, line in enumerate(matrix_lines):
     if coverage != {'NONE'} and guard == EMPTY_CASE:
         errors.append(f'{matrix}:{lineno}: non-NONE Coverage requires a Guard')
 
-
-def parse_overview(title: str) -> list[list[str]]:
-    """Return Markdown table rows between an exact H2 and the next H2."""
-    try:
-        start = matrix_lines.index(f'## {title}') + 1
-    except ValueError:
-        errors.append(f'{matrix}: missing overview: {title}')
-        return []
-    rows: list[list[str]] = []
-    for line in matrix_lines[start:]:
-        if line.startswith('## '):
-            break
-        if line.startswith('|'):
-            cells = [cell.strip() for cell in line.strip('|').split('|')]
-            if not cells[0].startswith('---'):
-                rows.append(cells)
-    return rows
-
-
-coverage_rows = parse_overview('Coverage \u6982\u89c8')
-coverage_header = ['\u8f74', '\u884c\u6570', 'UNIT', 'CONTRACT', 'CLUSTER', 'SPIKE', 'NONE']
-if not coverage_rows or coverage_rows[0] != coverage_header:
-    errors.append(f'{matrix}: Coverage overview has an unexpected header')
-else:
-    declared_coverage: dict[str, list[int]] = {}
-    declared_total: list[int] | None = None
-    for cells in coverage_rows[1:]:
-        name = cells[0]
-        if len(cells) != len(coverage_header):
-            errors.append(f'{matrix}: malformed Coverage overview row: {name}')
-            continue
-        try:
-            values = [int(cell.strip('*')) for cell in cells[1:]]
-        except ValueError:
-            errors.append(f'{matrix}: non-numeric Coverage overview row: {name}')
-            continue
-        if name == '**\u5408\u8ba1**':
-            declared_total = values
-        elif name in semantic_axes:
-            declared_coverage[name] = values
-
-    for axis in sorted(semantic_axes):
-        counter = computed[axis]
-        actual = [counter['rows']] + [counter[name] for name in coverage_header[2:]]
-        if declared_coverage.get(axis) != actual:
-            errors.append(
-                f'{matrix}: Coverage overview mismatch for {axis}: '
-                f'declared={declared_coverage.get(axis)}, actual={actual}'
-            )
-    actual_total = [
-        sum(computed[axis][key] for axis in semantic_axes)
-        for key in ['rows'] + coverage_header[2:]
-    ]
-    if declared_total != actual_total:
+for axis, expected in expected_inventory.items():
+    observed = {
+        key: computed[axis][key]
+        for key in ('rows', 'UNIT', 'CONTRACT', 'CLUSTER', 'SPIKE', 'NONE')
+    }
+    if observed != expected:
         errors.append(
-            f'{matrix}: Coverage overview total mismatch: '
-            f'declared={declared_total}, actual={actual_total}'
+            f'semantic inventory drift for {axis}: expected {expected}, observed {observed}'
         )
 
-classification_rows = parse_overview('Classification \u6982\u89c8')
-classification_header = [
-    '\u8303\u56f4', '\u884c\u6570', 'MATCH', 'DIFFERENT', 'UNSUPPORTED', 'UNKNOWN'
-]
-if not classification_rows or classification_rows[0] != classification_header:
-    errors.append(f'{matrix}: Classification overview has an unexpected header')
-else:
-    declared_classification: dict[str, list[int]] = {}
-    for cells in classification_rows[1:]:
-        axis = cells[0].split('\uff08', 1)[0]
-        if axis not in semantic_axes or len(cells) != len(classification_header):
-            continue
-        try:
-            declared_classification[axis] = [int(cell.strip('*')) for cell in cells[1:]]
-        except ValueError:
-            continue
-    for axis in sorted(semantic_axes):
-        counter = computed[axis]
-        if not counter['migrated_rows']:
-            continue
-        actual = [counter['migrated_rows']] + [
-            counter[name] for name in classification_header[2:]
-        ]
-        if declared_classification.get(axis) != actual:
-            errors.append(
-                f'{matrix}: Classification overview mismatch for {axis}: '
-                f'declared={declared_classification.get(axis)}, actual={actual}'
-            )
+expected_rename_classification = {
+    'MATCH': 20, 'DIFFERENT': 5, 'UNSUPPORTED': 0, 'UNKNOWN': 2,
+}
+observed_rename_classification = {
+    value: computed['rename'][value]
+    for value in ('MATCH', 'DIFFERENT', 'UNSUPPORTED', 'UNKNOWN')
+}
+if observed_rename_classification != expected_rename_classification:
+    errors.append(
+        'rename Classification drift: expected '
+        f'{expected_rename_classification}, observed {observed_rename_classification}'
+    )
 
-# A delegating case has no expectation of its own, so at least one row must supply one.
+
+# A delegating case has no expectation of its own, so at least one record or row must supply one.
 for test_id, (path, lineno) in sorted(delegating.items()):
     if test_id not in owned:
         errors.append(
             f'{path}:{lineno}: {test_id} delegates its expected result, but no '
-            f'{matrix.name} row cites it'
+            'semantic record or row cites it'
         )
 
 if not defined:
     errors.append('no case definitions were parsed')
 if not seen_coverage:
-    errors.append('no semantics rows were parsed')
+    errors.append('no semantic records or rows were parsed')
 if errors:
     print('\n'.join(errors), file=sys.stderr)
     raise SystemExit(1)
 print(
-    f'[check-docs] semantics matrix references resolved; '
-    f'{len(delegating)} case(s) delegate their expected result'
+    f'[check-docs] semantic baseline: '
+    f'{sum(counter["rows"] for counter in computed.values())} conditions; '
+    f'{catalog_semantics} catalog record(s); '
+    f'{len(delegating)} delegated case(s)'
 )
 PY
 then
-  fail 'semantics matrix references or expected-result delegation are invalid'
+  fail 'semantic baseline references or expected-result delegation are invalid'
 fi
 
 legacy_paths=(
@@ -538,4 +560,4 @@ if (( failures > 0 )); then
   exit 1
 fi
 
-note "PASS: PROGRESS.md ${progress_lines} lines/${progress_bytes} bytes; links, IDs, duplicates, archives, local identifiers, and legacy paths validated"
+note "PASS: PROGRESS.md ${progress_lines} lines/${progress_bytes} bytes; catalog, semantic inventory, links, IDs, duplicates, archives, local identifiers, and legacy paths validated"

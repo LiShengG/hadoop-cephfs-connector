@@ -3,7 +3,8 @@
 ## Purpose
 
 This document defines stable test layers, environments, entry points, and release gates. Current
-results are maintained in [READINESS.md](READINESS.md) and dated [reports/](reports/).
+status and the concise operational journal are structured records in
+[catalog.ndjson](catalog.ndjson); release-gate evidence remains in dated [reports/](reports/).
 
 ## Test layers
 
@@ -39,10 +40,12 @@ results are maintained in [READINESS.md](READINESS.md) and dated [reports/](repo
   environment. It adds preconditions or steps only where they are not implied by the heading.
 - A definition without explicit steps is executed as: establish the required environment, perform the
   operation named by the heading, then record inputs, outputs, errors, resource state, and cleanup.
-- [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) owns expected behavior, its basis, current-behavior
-  classification, exact guards, and structural Coverage per decision condition. Coverage does not
-  carry execution state. A case whose expectation is decision-level delegates to the matrix instead
-  of restating it, and its expected result is then the union of the rows citing that case.
+- The semantic baseline owns expected behavior, its basis, current-behavior classification, exact
+  guards, and structural Coverage per decision condition. Migrated records live in
+  [catalog.ndjson](catalog.ndjson), while not-yet-migrated axes remain in
+  [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md). Coverage does not carry execution state. A case whose
+  expectation is decision-level delegates to the baseline instead of restating it, and its expected
+  result is then the union of the records or rows citing that case.
 - Suite-level, performance, spike, and ecosystem cases state their own expected results, because
   their expectations are not decision-level.
 
@@ -50,8 +53,10 @@ results are maintained in [READINESS.md](READINESS.md) and dated [reports/](repo
 
 1. Run the smallest unit or integration class covering the change.
 2. Confirm the target environment with its read-only status command before cluster-gated work.
-3. Record the commit, component versions, exact commands, per-ID result, and evidence location in a
-   dated report.
+3. Append a concise `run` record with the tested revision, commands, result, and evidence links. Use
+   `commit` for committed code, or `worktree_base` with `dirty: true` for an uncommitted experiment;
+   only migrated historical records may use `revision_unknown: true`. For a release-gate execution,
+   retain component versions, per-ID results, observations, and cleanup in a dated report as well.
 4. Preserve failed results. Do not convert an environment failure into a connector pass.
 5. Verify data-bearing failure cases with an integrity assertion appropriate to the test definition.
 6. Restore the environment and remove only test-owned paths after execution.
@@ -67,7 +72,7 @@ results are maintained in [READINESS.md](READINESS.md) and dated [reports/](repo
 | Release candidate | T12 security, soak, operations, negative-path, and waiver review |
 
 Numeric thresholds are defined by the applicable test case or active task. Status is determined only
-by linked evidence in [READINESS.md](READINESS.md).
+by explicit `readiness_area` records linked to evidence; the viewer never infers readiness from counts.
 
 ## Failure handling
 
@@ -81,7 +86,8 @@ by linked evidence in [READINESS.md](READINESS.md).
 
 ## Report storage
 
-Store executions as `reports/YYYY-MM-DD-<environment>-<topic>.md`. Reports contain only actual
-commands and observations. Architecture explanations link to [ARCHITECTURE.md](ARCHITECTURE.md),
+Store release-gate executions as `reports/YYYY-MM-DD-<environment>-<topic>.md`. Reports contain only
+actual commands and observations. Architecture explanations link to [ARCHITECTURE.md](ARCHITECTURE.md),
 current limitations link to [KNOWN-LIMITATIONS.md](KNOWN-LIMITATIONS.md), and resolved work is indexed
-once in [archive/](archive/).
+once in [archive/](archive/). The corresponding catalog `run` record is a concise index and does not
+replace the report's detailed evidence.

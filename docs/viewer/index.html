@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Hadoop CephFS documentation catalog</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
+
+  <header class="site-header">
+    <div>
+      <p class="eyebrow">Structured documentation experiment</p>
+      <h1>Hadoop CephFS 文档目录</h1>
+      <p id="catalog-summary" class="catalog-summary" aria-live="polite">正在载入 catalog…</p>
+    </div>
+    <button id="reload-button" class="secondary-button" type="button">重新载入</button>
+  </header>
+
+  <nav class="primary-nav" aria-label="主要视图">
+    <a href="#/dashboard" data-view="dashboard">Dashboard</a>
+    <a href="#/semantics" data-view="semantics">Semantics</a>
+    <a href="#/project" data-view="project">Project / Readiness</a>
+    <a href="#/experiments" data-view="experiments">Experiments</a>
+  </nav>
+
+  <section class="filter-panel" aria-labelledby="filter-title">
+    <div class="filter-heading">
+      <div>
+        <p class="eyebrow">Catalog query</p>
+        <h2 id="filter-title">筛选记录</h2>
+      </div>
+      <button id="clear-filters" class="text-button" type="button">清除筛选</button>
+    </div>
+
+    <div class="filter-grid">
+      <label class="search-field">
+        <span>全文搜索</span>
+        <input id="search-filter" type="search" placeholder="ID、摘要、命令、引用…" autocomplete="off">
+      </label>
+      <label>
+        <span>Kind</span>
+        <select id="kind-filter"><option value="">全部</option></select>
+      </label>
+      <label>
+        <span>Axis</span>
+        <select id="axis-filter"><option value="">全部</option></select>
+      </label>
+      <label>
+        <span>Classification</span>
+        <select id="classification-filter"><option value="">全部</option></select>
+      </label>
+      <label>
+        <span>Coverage</span>
+        <select id="coverage-filter"><option value="">全部</option></select>
+      </label>
+      <label>
+        <span>Status / state</span>
+        <select id="status-filter"><option value="">全部</option></select>
+      </label>
+    </div>
+  </section>
+
+  <main id="main-content" tabindex="-1">
+    <section id="message-panel" class="message-panel" aria-live="assertive" hidden></section>
+    <div id="view-root" aria-live="polite" aria-busy="true"></div>
+  </main>
+
+  <footer>
+    <p>页面统计与反向引用均由 <code>docs/catalog.ndjson</code> 在浏览器中计算。</p>
+  </footer>
+
+  <noscript>此页面需要 JavaScript 才能读取并展示 NDJSON catalog。</noscript>
+  <script src="app.js" defer></script>
+</body>
+</html>

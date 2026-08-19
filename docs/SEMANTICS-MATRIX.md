@@ -4,21 +4,21 @@
 
 本文档按操作而非测试阶段来索引核心文件系统语义。[`TEST-PLAN.md`](TEST-PLAN.md) 与
 [`TEST-CASES-ECO.md`](TEST-CASES-ECO.md) 按层次和组件组织定义，一个操作因此被打散到多个分组里。
-本矩阵提供正交视角：一行一个决策条件，说明该操作应当做什么、依据是什么、今天实际做了什么，以及哪一个精确
-断言守着它。
+语义基线提供正交视角：一个 record 或一行对应一个决策条件，说明该操作应当做什么、依据是什么、今天实际做了
+什么，以及哪一个精确断言守着它。
 
-本矩阵拥有决策条件粒度上的期望行为。凡是本会重复陈述期望的用例定义，一律委托到这里，使一条期望只存在于
-一处，无法在文件之间发生漂移。实际行为由源码拥有，用例的身份与范围由两个用例文件拥有，执行结果由带日期的
-[`reports/`](reports/) 拥有。
+本索引与 [`catalog.ndjson`](catalog.ndjson) 共同组成语义基线，拥有决策条件粒度上的期望行为。凡是会重复陈述
+期望的用例定义，一律委托到基线，使一条期望只存在于一处。实际行为由源码拥有，用例的身份与范围由两个用例
+文件拥有，执行观察由 catalog `run` records 与带日期的 [`reports/`](reports/) 拥有。
 
 ## Current scope（当前范围）
 
-当前清单覆盖 13 个轴、169 个决策条件：rename、create、delete、sync、visibility、identity、append、mkdirs、
-path-entrypoint、metadata、read、status-defaults 与 block-location。这是当前已盘点范围，不是完整的 Hadoop
-FileSystem SPI 语义清单，也不构成未列出能力已经兼容的声明。
+当前清单覆盖 rename、create、delete、sync、visibility、identity、append、mkdirs、path-entrypoint、metadata、
+read、status-defaults 与 block-location。精确行数和分类统计由 catalog viewer 与校验脚本计算，不在本文手工
+维护。这是当前已盘点范围，不是完整的 Hadoop FileSystem SPI 语义清单，也不构成未列出能力已经兼容的声明。
 
-rename 是第一个完成新八列 schema 迁移的轴；原来的同路径条件按普通文件与目录拆开，因此由 26 行变为 27 行。
-其余轴暂时保留五列形式，后续按同一 schema 逐轴迁移；它们的 `Guard / 用例` 与 `Coverage` 已先完成解耦。
+rename 是第一个迁移到 [`catalog.ndjson`](catalog.ndjson) 的轴；其余轴暂时保留本文中的五列表格，后续按同一
+schema 逐轴迁移。待迁移行的 `Guard / 用例` 与 `Coverage` 已先完成解耦。
 
 ## Deferred semantic axes（延后语义轴）
 
@@ -70,88 +70,43 @@ snapshot、native session lifecycle 与 multi-filesystem selection。现有孤�
 | `SPIKE` | 只被脚本探针观察过一次，无法让构建失败 |
 | `NONE` | 当前没有自动断言或探针；`Guard / 用例` 仍可列出计划中的稳定用例 ID |
 
-一个用例 ID 可以出现在多行上。这些行合起来才是该用例完整的期望结果，单独一行永远不是全部。已迁移轴的
+一个用例 ID 可以出现在多个 records 或行上。它们合起来才是该用例完整的期望结果，单独一项永远不是全部。已迁移轴的
 自动化覆盖必须写出 `Class#method`，不能要求读者按条件搜索测试树；待迁移轴尚未补齐这层追溯。
-`NOT_RUN`、`PASS`、`FAIL` 等执行状态不进入本矩阵，只由带日期的 [`reports/`](reports/) 与
-[`READINESS.md`](READINESS.md) 持有。
+`NOT_RUN`、`PASS`、`FAIL` 等执行状态不进入 semantic records，只由 catalog `run` records、带日期的
+[`reports/`](reports/) 与显式 `readiness_area` records 持有。
 
 尚未迁移的五列表格以 `符合`、`符合（源码判断）`、**粗体差异**与`未知`临时表达分类；新 schema 不再使用这种
 隐式约定。
 
-## Classification 概览
+## Derived views（派生视图）
 
-| 范围 | 行数 | MATCH | DIFFERENT | UNSUPPORTED | UNKNOWN |
-|---|---|---|---|---|---|
-| rename（已迁移） | 27 | 20 | 5 | 0 | 2 |
-| 其余 12 个轴（待迁移） | 142 | — | — | — | — |
+Classification、Coverage、axis counts 与反向引用不再落盘为手工汇总。启动
+[`viewer/`](viewer/) 查看可筛选视图，或只查询需要的 records：
 
-## Coverage 概览
+```bash
+python3 scripts/docs-catalog.py query --kind semantic --where axis=rename
+python3 scripts/docs-catalog.py query --kind semantic --where classification=DIFFERENT
+```
 
-| 轴 | 行数 | UNIT | CONTRACT | CLUSTER | SPIKE | NONE |
-|---|---|---|---|---|---|---|
-| rename | 27 | 18 | 4 | 6 | 1 | 8 |
-| create | 21 | 11 | 2 | 1 | 0 | 10 |
-| delete | 10 | 7 | 2 | 1 | 0 | 3 |
-| sync | 16 | 7 | 3 | 0 | 0 | 8 |
-| visibility | 5 | 1 | 1 | 1 | 1 | 1 |
-| identity | 20 | 11 | 0 | 1 | 6 | 6 |
-| append | 5 | 3 | 0 | 1 | 0 | 2 |
-| mkdirs | 10 | 7 | 1 | 0 | 0 | 3 |
-| path-entrypoint | 10 | 9 | 0 | 3 | 0 | 0 |
-| metadata | 13 | 12 | 1 | 2 | 0 | 1 |
-| read | 10 | 9 | 0 | 1 | 0 | 1 |
-| status-defaults | 8 | 7 | 0 | 1 | 0 | 1 |
-| block-location | 14 | 12 | 0 | 5 | 0 | 2 |
-| **合计** | **169** | **114** | **14** | **23** | **8** | **46** |
-
-一行可以同时带多个 Coverage，因此各列之和不等于行数；`NONE` 不与其他 Coverage 组合。数字应从下面的表格
-重新算出，而不是手工编辑。`SPIKE` 只能说明曾有探针观察，不能代替回归断言或最近执行结果。
+一条语义可以同时带多个 Coverage，因此各 Coverage 计数之和不等于条件数；`NONE` 不与其他 Coverage 组合。
+`SPIKE` 只能说明曾有探针观察，不能代替回归断言或最近执行结果。
 
 ## rename
 
-`FileSystem#rename(Path, Path)` —— 返回布尔值的入口。它以返回 `false` 表示失败，于是大量互不相同的条件
-坍缩到同一个返回值上，每种都需要单独一行。
+rename 的决策条件已迁移为 [`catalog.ndjson`](catalog.ndjson) 中 `SEM-RENAME-001` 至
+`SEM-RENAME-027` 的 `semantic` records。catalog 是这些条件的唯一 owner；本文只保留入口与解释，不再复制
+表格。可在 [HTTP viewer](viewer/index.html#/record/SEM-RENAME-001) 中逐条浏览并沿 Guard、limitation、ADR 或
+evidence 跳转，也可以只读取需要的 records：
 
-Hadoop 3.3.6 的规范没有规定目录 self-rename 的返回值；这里采用 HDFS 3.3.6 实现。旧 rename 先通过
-`dstForRenameTo()` 把目录目的路径展开为 `dst/basename(src)`，再检查路径相等，因此目录 `/a/dir` 到自身会变成
-`/a/dir/dir` 并失败；普通文件不会发生这次展开。
+```bash
+python3 scripts/docs-catalog.py query --kind semantic --where axis=rename
+python3 scripts/docs-catalog.py show SEM-RENAME-004
+```
 
-| 决策条件 | 期望行为 | Basis | 当前行为 | Classification | Guard / 用例 | Coverage | Limitation / ADR |
-|---|---|---|---|---|---|---|---|
-| src 不存在 | `false` | `HDFS-3.3.6` | 返回 `false` | `MATCH` | `TestCephFileSystemMetaRename#testSrcMissingReturnsFalse`<br>`ITestCephContractRename#testRenameNonexistentFile`<br>`ITestCephFileSystemMeta#testRenameSemantics` | UNIT + CONTRACT + CLUSTER | — |
-| src 是根目录 | `false` | `HADOOP-SPEC` + `HDFS-3.3.6` | 返回 `false` | `MATCH` | `TestCephFileSystemMetaRename#testRenameRootReturnsFalse` | UNIT | — |
-| 普通文件，src 与 dst 相同且存在 | `true`，空操作 | `HADOOP-SPEC` | 返回 `true`，不调用底层 rename | `MATCH` | `TestCephFileSystemMetaRename#testSrcEqualsDstReturnsTrue` | UNIT | — |
-| 目录，src 与 dst 相同且存在 | `false`，目录保持不变 | `HDFS-3.3.6` | 在目录目的路径展开前直接返回 `true` | `DIFFERENT` | — | NONE | [LIM-010](KNOWN-LIMITATIONS.md#lim-010-legacy-directory-self-rename-diverges-from-hdfs) |
-| dst 已存在且是文件 | `false`，目标不受影响 | `HDFS-3.3.6` | 返回 `false`，目标不受影响 | `MATCH` | `TestCephFileSystemMetaRename#testDstExistingFileReturnsFalse`<br>`ITestCephContractRename#testRenameFileOverExistingFile`<br>`ITestCephFileSystemMeta#testRenameSemantics`<br>FN-18 | UNIT + CONTRACT + CLUSTER | — |
-| dst 已存在且是目录 | 以源名移入该目录之下 | `HADOOP-SPEC` + `HDFS-3.3.6` | 将目标展开为 `dst/basename(src)` 后调用底层 rename | `MATCH` | `TestCephFileSystemMetaRename#testDstExistingDirectoryMovesUnderIt`<br>`ITestCephFileSystemMeta#testRenameSemantics`<br>FN-18 | UNIT + CLUSTER | — |
-| dst 是目录且目标名已被占用 | `false` | `HDFS-3.3.6` | 返回 `false` | `MATCH` | `TestCephFileSystemMetaRename#testDstDirectoryWithOccupiedNameReturnsFalse`<br>FN-18 | UNIT | — |
-| rename 到自己的父目录 | `true`，空操作 | `HDFS-3.3.6` | 展开后的目标等于 src，返回 `true` | `MATCH` | `TestCephFileSystemMetaRename#testRenameIntoOwnParentReturnsTrue` | UNIT | — |
-| dst 的父目录不存在 | `false`，不创建任何目录 | `HDFS-3.3.6` | 返回 `false`，不创建目录 | `MATCH` | `TestCephFileSystemMetaRename#testDstParentMissingReturnsFalse`<br>`ITestCephContractRename#testRenameFileNonexistentDir` | UNIT + CONTRACT | — |
-| dst 的父路径是文件 | `false` | `HDFS-3.3.6` | 返回 `false` | `MATCH` | `TestCephFileSystemMetaRename#testDstParentIsFileReturnsFalse` | UNIT | — |
-| 目录 rename 到自身子树内 | `false` | `HDFS-3.3.6` | 返回 `false` | `MATCH` | `TestCephFileSystemMetaRename#testRenameDirectoryIntoOwnSubtreeReturnsFalse`<br>FN-18 | UNIT | — |
-| 文件 rename 到不存在的 dst | `true` | `HADOOP-SPEC` | 调用底层 rename 并返回 `true` | `MATCH` | `TestCephFileSystemMetaRename#testSimpleRenameSucceeds`<br>`ITestCephContractRename#testRenameNewFileSameDir`<br>`ITestCephFileSystemMeta#testRenameSemantics` | UNIT + CONTRACT + CLUSTER | — |
-| 目录 rename 到不存在的 dst | `true` | `HADOOP-SPEC` | 调用底层 rename 并返回 `true` | `MATCH` | `TestCephFileSystemMetaRename#testRenameDirectory` | UNIT | — |
-| 在根一级上 rename | `true` | `HADOOP-SPEC` | 调用底层 rename 并返回 `true` | `MATCH` | `TestCephFileSystemMetaRename#testRenameAtRootLevel` | UNIT | — |
-| 相对路径 | 按工作目录解析 | `HADOOP-SPEC` | 先按工作目录转成绝对路径 | `MATCH` | `TestCephFileSystemMetaRename#testRenameRelativePaths` | UNIT | — |
-| 绑定层抛出"路径不存在"以外的错误 | 转换为 Hadoop 异常后抛出 | `HADOOP-SPEC` | 经 `mapCephException` 转换后抛出 | `MATCH` | — | NONE | — |
-| 存在性检查与调用之间 dst 被创建 | 目标绝不被静默替换 | `HADOOP-SPEC` + `HDFS-3.3.6` | 底层 POSIX rename 可静默覆盖竞态创建的 dst | `DIFFERENT` | — | NONE | [LIM-005](KNOWN-LIMITATIONS.md#lim-005-no-replace-rename-boundaries) |
-| 两个线程 rename 同一个 src | 恰有一个成功；失败方报 `false` 或"路径不存在"，无中间态 | `HADOOP-SPEC` | 尚未验证并发可观察结果 | `UNKNOWN` | FN-15 | NONE | — |
-| 在 100 层深的树内 rename | 成功且不栈溢出 | `HADOOP-SPEC` | 尚未验证深路径结果 | `UNKNOWN` | FN-05 | NONE | — |
-| 目录 rename 到一个已存在的空目录 | 移入其中，而非替换它 | `HDFS-3.3.6` | 源码将目标展开为 `dst/basename(src)` | `MATCH` | FN-18 | NONE | — |
-
-`FileSystem#rename(Path, Path, Options.Rename...)` —— `FileContext` 的入口，以抛异常表示失败。普通文件的
-no-replace rename 用一个 MDS 硬链接抢占目标
-（[ADR-0004](adr/0004-atomic-no-replace-for-regular-files.md)）。
-
-| 决策条件 | 期望行为 | Basis | 当前行为 | Classification | Guard / 用例 | Coverage | Limitation / ADR |
-|---|---|---|---|---|---|---|---|
-| 普通文件，no-replace，dst 不存在 | 成功；dst 抢占是原子的 | `HADOOP-SPEC` + `PROJECT-ADR-0004` | 以 hard link 原子抢占，再移除源 | `MATCH` | `TestCephFileSystemMetaRename#testNoOverwriteFileRenameUsesLinkThenUnlink`<br>`ITestCephFileContext#testRenameToAbsentDestination`<br>SP-04 | UNIT + CLUSTER | [ADR-0004](adr/0004-atomic-no-replace-for-regular-files.md) |
-| 普通文件，no-replace，dst 已存在 | `FileAlreadyExistsException`，两端不变 | `HADOOP-SPEC` + `PROJECT-ADR-0004` | 预检查或 hard-link 抢占冲突均映射为该异常 | `MATCH` | `TestCephFileSystemMetaRename#testNoOverwriteFileRenameMapsAtomicLinkConflict`<br>`ITestCephFileContext#testRenameWithoutOverwriteRejectsExistingDestination`<br>SP-04 | UNIT + CLUSTER | [ADR-0004](adr/0004-atomic-no-replace-for-regular-files.md) |
-| 抢占成功，源已被移除 | 视为成功 | `PROJECT-ADR-0004` | 保留已提交的目标并返回成功 | `MATCH` | `TestCephFileSystemMetaRename#testNoOverwriteFileRenameAcceptsConcurrentSourceRemoval` | UNIT | [ADR-0004](adr/0004-atomic-no-replace-for-regular-files.md) |
-| 抢占成功，但移除源失败 | 回滚目标并抛出错误 | `PROJECT-ADR-0004` | 尝试移除目标后抛出原错误 | `MATCH` | `TestCephFileSystemMetaRename#testNoOverwriteFileRenameRollsBackFailedSourceUnlink` | UNIT | [ADR-0004](adr/0004-atomic-no-replace-for-regular-files.md) |
-| 请求 overwrite，dst 已存在 | 顺序结果替换目标，且替换期间保持原子可见性 | `HADOOP-SPEC` | 顺序结果可完成覆盖；基类先 `delete(dst, false)` 再 `rename(src, dst)`，存在 transient ENOENT 与 crash window | `DIFFERENT` | CT-02（顺序功能兼容性）<br>FN-31（atomic visibility / crash window） | NONE | [LIM-009](KNOWN-LIMITATIONS.md#lim-009-replacing-rename-is-not-atomic) |
-| 源是目录，no-replace | 原子地保证 no-replace | `HADOOP-SPEC` | 委托基类检查后 rename；目录不能用 hard link 抢占 | `DIFFERENT` | — | NONE | [LIM-005](KNOWN-LIMITATIONS.md#lim-005-no-replace-rename-boundaries) |
-| 普通文件抢占与移除源之间发生崩溃 | rename 只留下一个名字 | `HADOOP-SPEC` | 两个名字都可能保留 | `DIFFERENT` | SP-04 | SPIKE | [LIM-005](KNOWN-LIMITATIONS.md#lim-005-no-replace-rename-boundaries) |
+旧 boolean rename 的目录 self-rename 采用 HDFS 3.3.6 行为作为期望：HDFS 先通过
+`dstForRenameTo()` 把目录目的路径展开为 `dst/basename(src)`，再检查路径相等，因此目录到自身失败，而普通文件
+到自身是空操作。`FileContext` 的普通文件 no-replace 路径使用 MDS hard-link 抢占；其项目决策由
+[ADR-0004](adr/0004-atomic-no-replace-for-regular-files.md) 持有。
 
 ## create
 
@@ -380,14 +335,17 @@ Hadoop block location 在本连接器中只是调度提示，不表示 Hadoop �
 
 ## 维护规则
 
-- 先把决策条件及其 Basis 作为一行加进来，再去写断言；项目自定语义必须先有 ADR 或 limitation。
-- 已迁移轴中，`Guard / 用例` 为 `—` 且 Coverage 为 `NONE` 的行，要么补精确断言或稳定用例定义，要么明确保留
-  为无守护项。
+- 已迁移轴先把决策条件及其 Basis 作为 catalog record 加进来，再写断言；待迁移轴暂时增加表格行。项目自定
+  语义必须先有 ADR 或 limitation。
+- 已迁移轴中，`guards` 为空且 Coverage 为 `NONE` 的 record，要么补精确断言或稳定用例定义，要么明确保留为
+  无守护项。
 - `DIFFERENT` 必须链接 [`KNOWN-LIMITATIONS.md`](KNOWN-LIMITATIONS.md) 或 ADR；不能再用粗体隐含分类。
-- Coverage 只描述守护机制。是否运行以及运行结果只更新 dated report 与 `READINESS.md`。
-- 要放宽或收紧一条期望，改这里，不要改用例文件。委托的用例根本没有期望文字可改——这正是委托的意义。
-- 删除一行之前，先确认没有用例委托到它。删掉某个委托用例的最后一行，会让该用例完全没有期望结果。
-- `scripts/check-docs.sh` 校验新 schema 的 Basis、Classification、Coverage 与偏离跟踪，并校验这里引用的每个
-  用例 ID 在用例文件中恰好定义一次、每个委托用例至少被一行引用。
+- Coverage 只描述守护机制。是否运行以及运行结果只更新 catalog `run` records 与 dated report；readiness 只由
+  显式决策更新。
+- 要放宽或收紧一条期望，修改其 canonical record 或待迁移行，不要改用例文件。
+- 删除一个条件之前，先确认没有用例委托到它；删掉某个委托用例的最后一个条件，会让该用例没有期望结果。
+- `scripts/check-docs.sh` 校验 catalog schema、Basis、Classification、Coverage、偏离跟踪、引用完整性，并校验
+  每个用例 ID 在用例文件中恰好定义一次、每个委托用例至少被一个 record 或一行引用。迁移期间它还锁定每个
+  语义轴的条件数与 Coverage 计数，避免未迁移表格中的无引用行被静默删除。
 - 套件级、性能、spike 与生态用例保留各自的期望结果。它们的期望不在决策条件粒度上，因此即使有行引用它们，
   本矩阵也不拥有其期望。

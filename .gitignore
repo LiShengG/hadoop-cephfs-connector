@@ -3,6 +3,8 @@ dist/native/*.jar
 dist/native/*.so*
 scripts/smoke/*.class
 *.class
+__pycache__/
+*.py[cod]
 target/
 # T07 打包产物
 dist/hadoop-cephfs-*/
