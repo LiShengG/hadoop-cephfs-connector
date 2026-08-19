@@ -332,9 +332,11 @@ once, per decision condition.
 - Expected result: 与 `stat` 一致，无回退/漂移
 - Required environment: E2
 
-## FN-31: FileContext rename 带 OVERWRITE 覆盖已存在目标 [P1]
+## FN-31: FileContext rename 带 OVERWRITE 的原子可见性与 crash window [P1]
 
 - Preconditions: Implementation or test basis: `CephFileSystem#rename(Path, Path, Options.Rename...)` 在 overwrite 分支委托 `super.rename`。
+- Steps: 让独立 observer 连续读取 dst，并在基类 delete 与后续 rename 之间注入失败或终止
+  客户端；分别记录顺序最终状态、transient ENOENT 与恢复后的 src/dst 状态。
 - Expected result: Defined by [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md) rows citing this ID.
 - Required environment: E2
 

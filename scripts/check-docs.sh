@@ -251,6 +251,7 @@ fi
 if ! python3 <<'PY'
 from __future__ import annotations
 
+from collections import Counter
 import pathlib
 import re
 import sys
@@ -283,56 +284,216 @@ errors: list[str] = []
 cited_id = re.compile(
     r'\b((?:UT|CT|FN|REL-F|PERF|SOAK|COMPAT|SEC|OPS|NEG|SP|ECO-[A-Z]+)-[0-9]+)\b'
 )
-allowed_status = {'UNIT', 'CONTRACT', 'CLUSTER', 'SPIKE', 'NOT_RUN', 'GAP'}
-# Current-behavior vocabulary defined by the matrix legend.
+allowed_coverage = {'UNIT', 'CONTRACT', 'CLUSTER', 'SPIKE', 'NONE'}
+allowed_classification = {'MATCH', 'DIFFERENT', 'UNSUPPORTED', 'UNKNOWN'}
+# Legacy current-behavior vocabulary retained until each axis moves to the eight-column schema.
 MATCHES = '\u7b26\u5408'
-UNASSERTED = '\u65e0\u65ad\u8a00'
-UNVERIFIED = '\u672a\u9a8c\u8bc1'
+SOURCE_JUDGMENT = '\u6e90\u7801\u5224\u65ad'
+UNKNOWN = '\u672a\u77e5'
 EMPTY_CASE = '\u2014'
 owned: set[str] = set()
-seen_status = False
+seen_coverage = False
+semantic_axes = {
+    'rename', 'create', 'delete', 'sync', 'visibility', 'identity', 'append',
+    'mkdirs', 'path-entrypoint', 'metadata', 'read', 'status-defaults',
+    'block-location',
+}
+computed: dict[str, Counter[str]] = {axis: Counter() for axis in semantic_axes}
+current_axis: str | None = None
 
 matrix_lines = matrix.read_text(encoding='utf-8').splitlines()
 for index, line in enumerate(matrix_lines):
     lineno = index + 1
+    if line.startswith('## '):
+        section = line.removeprefix('## ').strip()
+        current_axis = section if section in semantic_axes else None
+        continue
     if not line.startswith('|'):
         continue
     cells = [cell.strip() for cell in line.strip('|').split('|')]
     for test_id in cited_id.findall(line):
         if test_id not in defined:
             errors.append(f'{matrix}:{lineno}: cites undefined case ID: {test_id}')
-    # Only the five-column semantics rows carry a status; skip the legend tables. A header row is
-    # the line directly above a separator, which keeps this check independent of the header wording.
+    # Semantics rows use either the legacy five-column shape or the migrated eight-column shape.
+    # A header row is directly above a separator, keeping this independent of translated headings.
     following = matrix_lines[index + 1] if index + 1 < len(matrix_lines) else ''
-    if len(cells) != 5 or cells[0].startswith('---') or following.startswith('|---'):
+    if len(cells) not in {5, 8} or cells[0].startswith('---') or following.startswith('|---'):
         continue
-    owned.update(cited_id.findall(cells[3]))
-    tokens = {token for token in re.findall(r'[A-Z_]{3,}', cells[4])}
-    if not tokens:
-        errors.append(f'{matrix}:{lineno}: row has no status')
+
+    migrated = len(cells) == 8
+    behavior_index = 3 if migrated else 2
+    guard_index = 5 if migrated else 3
+    coverage_index = 6 if migrated else 4
+    guard = cells[guard_index]
+    owned.update(cited_id.findall(guard))
+
+    coverage = {token for token in re.findall(r'[A-Z_]{3,}', cells[coverage_index])}
+    if not coverage:
+        errors.append(f'{matrix}:{lineno}: row has no Coverage')
         continue
-    seen_status = True
-    unknown = tokens - allowed_status
-    if unknown:
-        errors.append(f'{matrix}:{lineno}: unknown status: {", ".join(sorted(unknown))}')
-    # The status column and the current-behavior column must agree with the legend, or the
-    # gap counts are meaningless.
-    behavior = cells[2]
-    has_case = cells[3] != EMPTY_CASE
-    asserted = bool(tokens & {'UNIT', 'CONTRACT', 'CLUSTER'})
-    if 'GAP' in tokens and has_case:
-        errors.append(f'{matrix}:{lineno}: GAP means no case ID, but this row cites one')
-    if 'NOT_RUN' in tokens and not has_case:
-        errors.append(f'{matrix}:{lineno}: NOT_RUN means a case ID owns it, but none is cited')
-    if behavior.startswith(MATCHES) and UNASSERTED not in behavior and not asserted:
+    seen_coverage = True
+    unknown_coverage = coverage - allowed_coverage
+    if unknown_coverage:
         errors.append(
-            f'{matrix}:{lineno}: behavior claims an enforced match without '
-            f'UNIT, CONTRACT, or CLUSTER'
+            f'{matrix}:{lineno}: unknown Coverage: {", ".join(sorted(unknown_coverage))}'
         )
-    if (UNASSERTED in behavior or behavior.startswith(UNVERIFIED)) and asserted:
+    if 'NONE' in coverage and len(coverage) != 1:
+        errors.append(f'{matrix}:{lineno}: NONE cannot be combined with another Coverage')
+
+    if current_axis is not None:
+        computed[current_axis]['rows'] += 1
+        computed[current_axis].update(coverage & allowed_coverage)
+
+    behavior = cells[behavior_index]
+    asserted = bool(coverage & {'UNIT', 'CONTRACT', 'CLUSTER'})
+    if not migrated:
+        if behavior.startswith(MATCHES) and SOURCE_JUDGMENT not in behavior and not asserted:
+            errors.append(
+                f'{matrix}:{lineno}: behavior claims an enforced match without '
+                f'UNIT, CONTRACT, or CLUSTER'
+            )
+        if (SOURCE_JUDGMENT in behavior or behavior.startswith(UNKNOWN)) and asserted:
+            errors.append(
+                f'{matrix}:{lineno}: behavior claims source-only or unknown behavior while '
+                f'Coverage names an automated assertion'
+            )
+        continue
+
+    basis = [part.strip().strip('`') for part in cells[2].split('+')]
+    invalid_basis = [
+        value for value in basis
+        if value not in {'HADOOP-SPEC', 'HDFS-3.3.6'}
+        and re.fullmatch(r'PROJECT-ADR-[0-9]{4}', value) is None
+    ]
+    if not basis or any(not value for value in basis) or invalid_basis:
         errors.append(
-            f'{matrix}:{lineno}: behavior claims no assertion while the status names one'
+            f'{matrix}:{lineno}: invalid Basis: {", ".join(invalid_basis or basis)}'
         )
+
+    classification = cells[4].strip('`')
+    if classification not in allowed_classification:
+        errors.append(f'{matrix}:{lineno}: invalid Classification: {classification}')
+    elif current_axis is not None:
+        computed[current_axis]['migrated_rows'] += 1
+        computed[current_axis][classification] += 1
+
+    tracking = cells[7]
+    if classification == 'DIFFERENT' and not re.search(r'\b(?:LIM|ADR)-[0-9]{3,4}\b', tracking):
+        errors.append(
+            f'{matrix}:{lineno}: DIFFERENT row must cite a limitation or ADR'
+        )
+    if classification == 'UNKNOWN' and coverage != {'NONE'}:
+        errors.append(f'{matrix}:{lineno}: UNKNOWN row must use Coverage NONE')
+
+    project_basis = [value.removeprefix('PROJECT-') for value in basis
+                     if value.startswith('PROJECT-')]
+    for decision in project_basis:
+        if decision not in tracking:
+            errors.append(
+                f'{matrix}:{lineno}: project Basis {decision} is not linked in Limitation / ADR'
+            )
+
+    automated = coverage & {'UNIT', 'CONTRACT', 'CLUSTER'}
+    if automated and '#' not in guard:
+        errors.append(f'{matrix}:{lineno}: automated Coverage requires an exact Class#method Guard')
+    if 'UNIT' in coverage and re.search(r'`Test[A-Za-z0-9]+#[A-Za-z0-9]+`', guard) is None:
+        errors.append(f'{matrix}:{lineno}: UNIT Coverage requires a Test*#method Guard')
+    if 'CONTRACT' in coverage and 'ITestCephContract' not in guard:
+        errors.append(f'{matrix}:{lineno}: CONTRACT Coverage requires an ITestCephContract* Guard')
+    if 'CLUSTER' in coverage and re.search(r'`ITest[A-Za-z0-9]+#[A-Za-z0-9]+`', guard) is None:
+        errors.append(f'{matrix}:{lineno}: CLUSTER Coverage requires an ITest*#method Guard')
+    if 'SPIKE' in coverage and re.search(r'\b(?:SP|ECO-[A-Z]+)-[0-9]+\b', guard) is None:
+        errors.append(f'{matrix}:{lineno}: SPIKE Coverage requires a stable spike Guard')
+    if coverage != {'NONE'} and guard == EMPTY_CASE:
+        errors.append(f'{matrix}:{lineno}: non-NONE Coverage requires a Guard')
+
+
+def parse_overview(title: str) -> list[list[str]]:
+    """Return Markdown table rows between an exact H2 and the next H2."""
+    try:
+        start = matrix_lines.index(f'## {title}') + 1
+    except ValueError:
+        errors.append(f'{matrix}: missing overview: {title}')
+        return []
+    rows: list[list[str]] = []
+    for line in matrix_lines[start:]:
+        if line.startswith('## '):
+            break
+        if line.startswith('|'):
+            cells = [cell.strip() for cell in line.strip('|').split('|')]
+            if not cells[0].startswith('---'):
+                rows.append(cells)
+    return rows
+
+
+coverage_rows = parse_overview('Coverage \u6982\u89c8')
+coverage_header = ['\u8f74', '\u884c\u6570', 'UNIT', 'CONTRACT', 'CLUSTER', 'SPIKE', 'NONE']
+if not coverage_rows or coverage_rows[0] != coverage_header:
+    errors.append(f'{matrix}: Coverage overview has an unexpected header')
+else:
+    declared_coverage: dict[str, list[int]] = {}
+    declared_total: list[int] | None = None
+    for cells in coverage_rows[1:]:
+        name = cells[0]
+        if len(cells) != len(coverage_header):
+            errors.append(f'{matrix}: malformed Coverage overview row: {name}')
+            continue
+        try:
+            values = [int(cell.strip('*')) for cell in cells[1:]]
+        except ValueError:
+            errors.append(f'{matrix}: non-numeric Coverage overview row: {name}')
+            continue
+        if name == '**\u5408\u8ba1**':
+            declared_total = values
+        elif name in semantic_axes:
+            declared_coverage[name] = values
+
+    for axis in sorted(semantic_axes):
+        counter = computed[axis]
+        actual = [counter['rows']] + [counter[name] for name in coverage_header[2:]]
+        if declared_coverage.get(axis) != actual:
+            errors.append(
+                f'{matrix}: Coverage overview mismatch for {axis}: '
+                f'declared={declared_coverage.get(axis)}, actual={actual}'
+            )
+    actual_total = [
+        sum(computed[axis][key] for axis in semantic_axes)
+        for key in ['rows'] + coverage_header[2:]
+    ]
+    if declared_total != actual_total:
+        errors.append(
+            f'{matrix}: Coverage overview total mismatch: '
+            f'declared={declared_total}, actual={actual_total}'
+        )
+
+classification_rows = parse_overview('Classification \u6982\u89c8')
+classification_header = [
+    '\u8303\u56f4', '\u884c\u6570', 'MATCH', 'DIFFERENT', 'UNSUPPORTED', 'UNKNOWN'
+]
+if not classification_rows or classification_rows[0] != classification_header:
+    errors.append(f'{matrix}: Classification overview has an unexpected header')
+else:
+    declared_classification: dict[str, list[int]] = {}
+    for cells in classification_rows[1:]:
+        axis = cells[0].split('\uff08', 1)[0]
+        if axis not in semantic_axes or len(cells) != len(classification_header):
+            continue
+        try:
+            declared_classification[axis] = [int(cell.strip('*')) for cell in cells[1:]]
+        except ValueError:
+            continue
+    for axis in sorted(semantic_axes):
+        counter = computed[axis]
+        if not counter['migrated_rows']:
+            continue
+        actual = [counter['migrated_rows']] + [
+            counter[name] for name in classification_header[2:]
+        ]
+        if declared_classification.get(axis) != actual:
+            errors.append(
+                f'{matrix}: Classification overview mismatch for {axis}: '
+                f'declared={declared_classification.get(axis)}, actual={actual}'
+            )
 
 # A delegating case has no expectation of its own, so at least one row must supply one.
 for test_id, (path, lineno) in sorted(delegating.items()):
@@ -344,7 +505,7 @@ for test_id, (path, lineno) in sorted(delegating.items()):
 
 if not defined:
     errors.append('no case definitions were parsed')
-if not seen_status:
+if not seen_coverage:
     errors.append('no semantics rows were parsed')
 if errors:
     print('\n'.join(errors), file=sys.stderr)

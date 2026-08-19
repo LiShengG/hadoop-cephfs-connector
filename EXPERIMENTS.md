@@ -32,4 +32,44 @@ Dated release-gate evidence remains in `docs/reports/`.
   post-run `ceph fs status` also timed out after 20 seconds, so no clean session comparison was made
 - Evidence: [dated report](docs/reports/2026-08-16-e3-spark-p0.md)
 
+## 2026-08-20 — Semantic Matrix schema documentation gate
+
+- Command: `bash scripts/check-docs.sh`
+- Result: PASS; 223 unique test IDs and 25 delegated cases validated, including the migrated
+  Basis/Classification/Guard/Coverage schema.
+
+## 2026-08-20 — Semantic Matrix count audit
+
+- Command: read-only parser over `docs/SEMANTICS-MATRIX.md` grouped by semantic axis.
+- Result: 169 rows; rename classification is 20 MATCH, 5 DIFFERENT, 2 UNKNOWN. Coverage totals are
+  UNIT 114, CONTRACT 14, CLUSTER 23, SPIKE 8, NONE 46; the draft overview's NONE total was one high.
+
+## 2026-08-20 — Documentation gate after overview validation
+
+- Command: `bash scripts/check-docs.sh`
+- Result: FAIL before validation; the new counter code raised `NameError: Counter is not defined`
+  because its import landed in a different embedded Python block.
+
+## 2026-08-20 — Documentation gate with computed matrix overviews
+
+- Command: `bash scripts/check-docs.sh`
+- Result: PASS; schema, exact-guard requirements, case delegation, and per-axis Classification/Coverage
+  overview counts all validated.
+
+## 2026-08-20 — Semantic Matrix diff hygiene
+
+- Command: `git diff --check`
+- Result: PASS; no whitespace errors in the schema, limitation, test-plan, ADR, or gate changes.
+
+## 2026-08-20 — Final Semantic Matrix documentation gate
+
+- Command: `bash scripts/check-docs.sh`
+- Result: PASS on the final schema and evidence-boundary changes; 223 IDs and 25 delegated cases
+  validated.
+
+## 2026-08-20 — Final documentation gate after migration-scope clarification
+
+- Command: `bash scripts/check-docs.sh`
+- Result: PASS; the final text explicitly limits exact `Class#method` enforcement to migrated axes.
+
 <!-- APPEND NEW EXPERIMENTS IMMEDIATELY ABOVE THIS LINE. DO NOT MOVE OR REMOVE THIS MARKER. -->

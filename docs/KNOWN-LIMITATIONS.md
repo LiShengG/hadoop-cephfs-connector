@@ -56,17 +56,22 @@ and, when necessary, retain their evidence in a dated report.
 ## LIM-005: No-replace rename boundaries
 
 - Status: OPEN
-- Affected scope: no-replace rename, directory commits, crash recovery, Spark checkpoint cleanup
-- Trigger: renaming a directory, crashing after the regular-file hard-link claim, or losing a race to
-  an existing destination
-- Impact: regular-file no-replace is atomic at the claim step, but a crash can leave both names;
-  directories do not use the hard-link strategy; a failed Spark competitor can retain a temporary
-  metadata source
-- Workaround: validate both names after a crashed commit and remove only the known source; let the
-  owning job or operator clean its temporary file; do not assume directory no-replace atomicity
-- Planned resolution: add directory/failure recovery cases and define cleanup ownership
+- Affected scope: no-replace rename, legacy boolean rename, directory commits, crash recovery, Spark
+  checkpoint cleanup
+- Trigger: renaming a directory, crashing after the regular-file hard-link claim, losing a race to an
+  existing destination, or having a destination appear between the legacy API's precheck and rename
+- Impact: regular-file `FileContext` no-replace is atomic at the claim step, but a crash can leave both
+  names; directories do not use the hard-link strategy; the legacy boolean API can overwrite a
+  destination created in its race window; a failed Spark competitor can retain a temporary source
+- Workaround: use `FileContext` no-replace for regular-file publication; validate both names after a
+  crashed commit and remove only the known source; let the owning job or operator clean its temporary
+  file; do not assume directory or legacy boolean no-replace atomicity
+- Planned resolution: add destination-race, directory, and failure-recovery cases and define cleanup
+  ownership
 - Tracking: SP-04, ECO-SPK-02, ECO-SPK-03
-- Last verified: [2026-08-15 E2 Spark rename](reports/2026-08-15-e2-spark-rename.md)
+- Last verified: the regular-file `FileContext` path in
+  [2026-08-15 E2 Spark rename](reports/2026-08-15-e2-spark-rename.md); the legacy destination race is
+  from source inspection at `6e4e5bc` and has no dated report
 
 ## LIM-006: Native session lifecycle
 
@@ -122,5 +127,22 @@ and, when necessary, retain their evidence in a dated report.
   publish-or-nothing step
 - Planned resolution: decide whether an overwriting rename warrants a connector-side atomic strategy or
   a documented support boundary, then cover FN-31
-- Tracking: FN-31, CT-02
+- Tracking:
+  - CT-02 — sequential functional compatibility after overwriting an existing destination
+  - FN-31 — atomic visibility and the delete-to-rename crash window
 - Last verified: connector delegation read from source; no dated report covers the base-class window
+
+## LIM-010: Legacy directory self-rename diverges from HDFS
+
+- Status: OPEN
+- Affected scope: `FileSystem.rename(dir, dir)` through the legacy boolean API
+- Trigger: source and destination name the same existing directory
+- Impact: the connector returns `true` before applying destination-directory expansion, while HDFS
+  3.3.6 expands the destination to `dir/basename(dir)` and returns `false`; callers therefore observe a
+  different success result even though neither filesystem changes the directory
+- Workaround: avoid issuing directory self-renames; compare normalized paths before calling rename when
+  the return value drives caller control flow
+- Planned resolution: move the same-path decision after source-type and destination-directory handling,
+  then add an exact unit guard
+- Tracking: no stable test ID yet; the uncovered decision is recorded in `SEMANTICS-MATRIX.md`
+- Last verified: source inspection at `6e4e5bc`; no dated report covers this condition
