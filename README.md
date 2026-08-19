@@ -93,7 +93,7 @@ For production-shaped evaluation:
 | Build and development | [docs/DEVELOP.md](docs/DEVELOP.md) |
 | Deployment and operations | [docs/DEPLOY.md](docs/DEPLOY.md) |
 | Test strategy and gates | [docs/TESTING.md](docs/TESTING.md) |
-| Test definitions | [docs/TEST-CASES.md](docs/TEST-CASES.md) |
+| Core test plan | [docs/TEST-PLAN.md](docs/TEST-PLAN.md) |
 | Ecosystem test definitions | [docs/TEST-CASES-ECO.md](docs/TEST-CASES-ECO.md) |
 | Production readiness | [docs/READINESS.md](docs/READINESS.md) |
 | Current limitations | [docs/KNOWN-LIMITATIONS.md](docs/KNOWN-LIMITATIONS.md) |

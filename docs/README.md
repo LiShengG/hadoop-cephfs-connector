@@ -7,7 +7,8 @@
 | Build and development | [`DEVELOP.md`](DEVELOP.md) |
 | Deployment and operations | [`DEPLOY.md`](DEPLOY.md) |
 | Test strategy | [`TESTING.md`](TESTING.md) |
-| Test case definitions | [`TEST-CASES.md`](TEST-CASES.md) |
+| Coverage by filesystem operation | [`SEMANTICS-MATRIX.md`](SEMANTICS-MATRIX.md) |
+| Core test plan and case IDs | [`TEST-PLAN.md`](TEST-PLAN.md) |
 | Ecosystem test cases | [`TEST-CASES-ECO.md`](TEST-CASES-ECO.md) |
 | Production readiness | [`READINESS.md`](READINESS.md) |
 | Current limitations | [`KNOWN-LIMITATIONS.md`](KNOWN-LIMITATIONS.md) |
@@ -23,6 +24,8 @@
 - Source code, tests, and `pom.xml` own API signatures, types, configuration defaults, dependency
   versions, and executable behavior.
 - `PROGRESS.md` owns active work and blockers. `READINESS.md` owns current release-gate status.
+- `SEMANTICS-MATRIX.md` owns expected behavior per decision condition. The case files own case
+  identity, priority, and required environment.
 - Environment documents own topology and safety boundaries, not experiment results.
 - Reports record dated executions. ADRs record architectural reasons. Archives contain one-line
   resolved-item indexes only.
