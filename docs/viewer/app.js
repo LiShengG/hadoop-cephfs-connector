@@ -39,6 +39,7 @@
     byId: new Map(),
     backlinks: new Map(),
     basisSources: new Map(),
+    axisBasisSources: new Map(),
     referenceResolvers: {},
     caseDocuments: new Map(),
     renderVersion: 0,
@@ -234,6 +235,7 @@
       state.byId = new Map();
       state.backlinks = new Map();
       state.basisSources = new Map();
+      state.axisBasisSources = new Map();
       state.referenceResolvers = {};
       state.caseDocuments = new Map();
       dom.summary.textContent = "catalog 载入失败";
@@ -293,6 +295,7 @@
 
   function installMetadata(records) {
     const basisSources = new Map();
+    const axisBasisSources = new Map();
     let referenceResolvers = {};
     records.filter(function (record) {
       return normalizedKind(record) === "meta";
@@ -302,11 +305,25 @@
           basisSources.set(entry[0], scalarValues(entry[1]));
         });
       }
+      if (record.axis_basis_sources && typeof record.axis_basis_sources === "object" &&
+          !Array.isArray(record.axis_basis_sources)) {
+        Object.entries(record.axis_basis_sources).forEach(function (axisEntry) {
+          if (!axisEntry[1] || typeof axisEntry[1] !== "object" || Array.isArray(axisEntry[1])) {
+            return;
+          }
+          const sourcesByBasis = axisBasisSources.get(axisEntry[0]) || new Map();
+          Object.entries(axisEntry[1]).forEach(function (basisEntry) {
+            sourcesByBasis.set(basisEntry[0], scalarValues(basisEntry[1]));
+          });
+          axisBasisSources.set(axisEntry[0], sourcesByBasis);
+        });
+      }
       if (record.reference_resolvers && typeof record.reference_resolvers === "object" && !Array.isArray(record.reference_resolvers)) {
         referenceResolvers = record.reference_resolvers;
       }
     });
     state.basisSources = basisSources;
+    state.axisBasisSources = axisBasisSources;
     state.referenceResolvers = referenceResolvers;
   }
 
@@ -641,9 +658,33 @@
         semantics.length,
         state.records.filter(function (record) { return normalizedKind(record) === "semantic"; }).length
       ),
+      semanticAxisSummary(semantics),
       semanticTable(semantics)
     ]);
     replaceContents(dom.root, section);
+  }
+
+  function semanticAxisSummary(records) {
+    const counts = countValues(records, "axis");
+    const list = element("ul", { className: "count-list semantic-axis-counts" });
+    Array.from(counts.entries()).sort(function (left, right) {
+      return compareText(left[0], right[0]);
+    }).forEach(function (entry) {
+      list.appendChild(element("li", null, [
+        createBadge(entry[0]),
+        element("span", { className: "count-value", text: String(entry[1]) })
+      ]));
+    });
+    if (!counts.size) {
+      list.appendChild(element("li", { className: "empty-inline", text: "当前筛选没有语义轴。" }));
+    }
+    return element("section", { className: "semantic-axis-summary", "aria-label": "Semantic records by axis" }, [
+      element("div", { className: "section-heading" }, [
+        element("h3", { text: "Axis counts" }),
+        element("p", { text: counts.size + " 个轴" })
+      ]),
+      list
+    ]);
   }
 
   function semanticTable(records) {
@@ -670,7 +711,7 @@
           element("p", { text: firstText(record, ["condition", "decision", "title", "summary"]) })
         ]),
         element("td", { dataset: { label: "Expected" } }, valuePreview(record.expected)),
-        element("td", { dataset: { label: "Basis" } }, compactBasis(record.basis)),
+        element("td", { dataset: { label: "Basis" } }, compactBasis(record.basis, record.axis)),
         element("td", { dataset: { label: "Classification" } }, badgesFor(record.classification)),
         element("td", { dataset: { label: "Coverage" } }, badgesFor(record.coverage))
       ]));
@@ -782,7 +823,7 @@
     Object.entries(record).forEach(function (entry) {
       fields.appendChild(element("div", { className: "field-row" }, [
         element("dt", { text: entry[0] }),
-        element("dd", null, renderValue(entry[1], entry[0]))
+        element("dd", null, renderValue(entry[1], entry[0], record.axis))
       ]));
     });
 
@@ -1156,7 +1197,7 @@
     }));
   }
 
-  function renderValue(value, fieldPath) {
+  function renderValue(value, fieldPath, axis) {
     if (value === null || value === undefined) {
       return element("span", { className: "empty-value", text: "null" });
     }
@@ -1166,7 +1207,7 @@
       }
       const list = element("ul", { className: "value-list" });
       value.forEach(function (item, index) {
-        list.appendChild(element("li", null, renderValue(item, fieldPath + "[" + index + "]")));
+        list.appendChild(element("li", null, renderValue(item, fieldPath + "[" + index + "]", axis)));
       });
       return list;
     }
@@ -1175,13 +1216,13 @@
       Object.entries(value).forEach(function (entry) {
         list.appendChild(element("div", null, [
           element("dt", { text: entry[0] }),
-          element("dd", null, renderValue(entry[1], fieldPath + "." + entry[0]))
+          element("dd", null, renderValue(entry[1], fieldPath + "." + entry[0], axis))
         ]));
       });
       return list;
     }
-    if (isBasisField(fieldPath) && state.basisSources.has(String(value))) {
-      return basisReference(String(value));
+    if (isBasisField(fieldPath) && hasBasisSources(String(value), axis)) {
+      return basisReference(String(value), axis);
     }
     if (state.byId.has(String(value)) || isLinkField(fieldPath) || isStructuredReference(String(value))) {
       return smartLink(String(value), fieldPath);
@@ -1240,8 +1281,21 @@
     return fieldPath.split(/[.\[]/).some(function (part) { return part.toLowerCase() === "basis"; });
   }
 
-  function basisReference(value) {
-    const sources = state.basisSources.get(value) || [];
+  function sourcesForBasis(value, axis) {
+    const axisSources = axis === undefined || axis === null ? null : state.axisBasisSources.get(String(axis));
+    if (axisSources && axisSources.has(value)) {
+      return axisSources.get(value);
+    }
+    return state.basisSources.get(value) || [];
+  }
+
+  function hasBasisSources(value, axis) {
+    const axisSources = axis === undefined || axis === null ? null : state.axisBasisSources.get(String(axis));
+    return Boolean(axisSources && axisSources.has(value)) || state.basisSources.has(value);
+  }
+
+  function basisReference(value, axis) {
+    const sources = sourcesForBasis(value, axis);
     const links = [createBadge(value)];
     sources.forEach(function (source, index) {
       const wrapper = smartLink(source, "basis_sources");
@@ -1252,13 +1306,13 @@
     return element("span", { className: "basis-reference" }, links);
   }
 
-  function compactBasis(value) {
+  function compactBasis(value, axis) {
     const values = scalarValues(value);
     if (!values.length) {
       return element("span", { className: "empty-value", text: "—" });
     }
     return element("span", { className: "basis-list" }, values.map(function (item) {
-      return state.basisSources.has(item) ? basisReference(item) : createBadge(item);
+      return hasBasisSources(item, axis) ? basisReference(item, axis) : createBadge(item);
     }));
   }
 

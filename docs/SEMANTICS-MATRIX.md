@@ -14,11 +14,14 @@
 ## Current scope（当前范围）
 
 当前清单覆盖 rename、create、delete、sync、visibility、identity、append、mkdirs、path-entrypoint、metadata、
-read、status-defaults 与 block-location。精确行数和分类统计由 catalog viewer 与校验脚本计算，不在本文手工
-维护。这是当前已盘点范围，不是完整的 Hadoop FileSystem SPI 语义清单，也不构成未列出能力已经兼容的声明。
+read、status-defaults 与 block-location。已迁移 records 的计数与分类由 catalog viewer 计算，完整清单的结构
+由校验脚本检查，不在本文手工维护。这是当前已盘点范围，不是完整的 Hadoop FileSystem SPI 语义清单，也不构成
+未列出能力已经兼容的声明。
 
-rename 是第一个迁移到 [`catalog.ndjson`](catalog.ndjson) 的轴；其余轴暂时保留本文中的五列表格，后续按同一
-schema 逐轴迁移。待迁移行的 `Guard / 用例` 与 `Coverage` 已先完成解耦。
+rename、create、delete、sync、append 与 mkdirs 这六个操作轴已经迁移到
+[`catalog.ndjson`](catalog.ndjson)；本文只保留各轴的导航与关键解释。visibility、identity、
+path-entrypoint、metadata、read、status-defaults 与 block-location 仍由本文中的五列表格拥有，后续再按
+同一 schema 逐轴迁移。待迁移行的 `Guard / 用例` 与 `Coverage` 已先完成解耦。
 
 ## Deferred semantic axes（延后语义轴）
 
@@ -43,12 +46,14 @@ snapshot、native session lifecycle 与 multi-filesystem selection。现有孤�
 照着 HDFS 的行为写的；两者都无法定夺时由本矩阵决定，而该决定需要在 ADR 或
 [`KNOWN-LIMITATIONS.md`](KNOWN-LIMITATIONS.md) 中留下理由。
 
-`Basis` 可以组合以下值：
+`Basis` 是稳定的依据标识，可以组合使用。精确来源映射由 catalog metadata 拥有；某个轴声明了
+`axis_basis_sources` 时优先使用该轴的来源，否则回退到全局 `basis_sources`。viewer 会把二者解析成可点击链接，
+避免在每条 record 中复制 URL。当前全局通用值包括：
 
 | Basis | 依据 |
 |---|---|
-| `HADOOP-SPEC` | [Hadoop 3.3.6 FileSystem specification](https://hadoop.apache.org/docs/r3.3.6/hadoop-project-dist/hadoop-common/filesystem/filesystem.html) 与 [FileContext API](https://hadoop.apache.org/docs/r3.3.6/api/org/apache/hadoop/fs/FileContext.html) |
-| `HDFS-3.3.6` | [HDFS 3.3.6 `FSDirRenameOp`](https://github.com/apache/hadoop/blob/rel/release-3.3.6/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSDirRenameOp.java) 的实际分支顺序与结果 |
+| `HADOOP-SPEC` | Hadoop 3.3.6 的 FileSystem、stream 或 API 规范；catalog 按轴链接到实际使用的页面或源码 |
+| `HDFS-3.3.6` | HDFS 3.3.6 的对应实现分支；catalog 按轴链接到 rename/create/delete/append/mkdirs 等实际源码 |
 | `PROJECT-ADR-xxxx` | 本仓库对应 ADR 中接受的项目决策 |
 
 `Classification` 取值：
@@ -110,76 +115,48 @@ python3 scripts/docs-catalog.py show SEM-RENAME-004
 
 ## create
 
+create 的决策条件已迁移为 [`catalog.ndjson`](catalog.ndjson) 中 `SEM-CREATE-001` 至
+`SEM-CREATE-021` 的 `semantic` records。catalog 是这些条件的唯一 owner；本文不再复制表格。可从
+[首条 create record](viewer/index.html#/record/SEM-CREATE-001) 开始浏览，或按轴查询：
+
+```bash
+python3 scripts/docs-catalog.py query --kind semantic --where axis=create
+python3 scripts/docs-catalog.py show SEM-CREATE-001
+```
+
 `FileSystem#create` 与两个 `createNonRecursive` 重载共用同一条内部路径，因此在一个入口上得到验证的条件，
 并不自动在其他入口上成立。
 
-| 决策条件 | 期望行为 | 当前行为 | Guard / 用例 | Coverage |
-|---|---|---|---|---|
-| `overwrite=false`，dst 已存在且是文件 | `FileAlreadyExistsException` | 符合 | — | UNIT |
-| `overwrite=true`，dst 已存在且是文件 | 原有内容被截断 | 符合 | — | UNIT + CLUSTER |
-| `overwrite=true`，dst 已存在且是目录 | `FileAlreadyExistsException` | 符合 | — | UNIT + CONTRACT |
-| `overwrite=false`，dst 已存在且是目录 | `FileAlreadyExistsException` | 符合（源码判断） | — | NONE |
-| 父目录不存在，递归 create | 先建父目录，再建文件 | 符合 | — | UNIT |
-| 父目录不存在，`createNonRecursive` | `FileNotFoundException`；不创建父目录 | 符合 | — | UNIT |
-| 父路径是文件，递归 create | `ParentNotDirectoryException` | 符合 | — | UNIT + CONTRACT |
-| 父路径是文件，`createNonRecursive` | `ParentNotDirectoryException` | 符合（源码判断） | — | NONE |
-| 绑定层报告目标不是目录 | `ParentNotDirectoryException` | 符合 | UT-01 | UNIT |
-| 更上层的某个祖先是文件 | `ParentNotDirectoryException` | 符合（源码判断） | UT-02 | NONE |
-| flag 重载，仅 create | 独占创建 | 符合 | — | UNIT |
-| flag 重载，overwrite | 原有内容被截断 | 符合 | — | UNIT |
-| flag 重载，不支持的 flag 组合 | 被 flag 校验拒绝 | **被忽略；flag 从不校验** | — | NONE |
-| 两个线程 create 同一路径，`overwrite=false` | 恰有一个成功；其余全部得到 `FileAlreadyExistsException` | 未知 | FN-17 | NONE |
-| 前置检查之后路径被并发创建，`overwrite=true` | 成功并截断 | **以 `FileAlreadyExistsException` 失败** | — | NONE |
-| 调用方给定的 block size | 向上取整到 64 KiB 的整数倍，以 layout 上限封顶，且永不溢出 | 符合 | UT-03 | UNIT |
-| 配置了多个 data pool | 使用第一个 | 符合 | — | UNIT |
-| 空文件与稀疏写 | 长度与内容符合 POSIX；block location 仍能解析 | 未知 | FN-09 | NONE |
-| 文件名含空格、UTF-8 或 URI 保留字符 | 经 API 与 CLI 创建、列举、读取、删除的行为一致 | 未知 | FN-06 | NONE |
-| 文件名处于以及超过 255 字节上限 | 处于上限时成功；超过时以可诊断的错误失败 | 未知 | FN-07 | NONE |
-| 路径总长接近 4096 字节 | 有一个固定且已记录在案的结果 | 未知 | FN-08 | NONE |
-
 ## delete
 
-根目录非递归删除返回 `false` 是本项目有意选择的语义：`filesystem.md` 允许对根目录做特殊处理，
-契约基类期望抛出异常，`ITestCephContractRootDirectory` 以 `@Override` 改写为验证本实现的语义。
+delete 的决策条件已迁移为 [`catalog.ndjson`](catalog.ndjson) 中 `SEM-DELETE-001` 至
+`SEM-DELETE-010` 的 `semantic` records。catalog 是这些条件的唯一 owner；本文不再复制表格。可从
+[首条 delete record](viewer/index.html#/record/SEM-DELETE-001) 开始浏览，或按轴查询：
+
+```bash
+python3 scripts/docs-catalog.py query --kind semantic --where axis=delete
+python3 scripts/docs-catalog.py show SEM-DELETE-001
+```
+
+`ITestCephContractRootDirectory` 的本地 override 只守护 connector 当前返回 `false` 的顺序结果，不把它变成
+HDFS 语义。catalog 以 HDFS 3.3.6 为期望，并把非空根目录与递归删除的差异记录到 LIM-012。
 
 `fs.trash.interval` 是 `FsShell`/`Trash` 包装层的行为，包装层通过 `rename` 把路径移进回收站，`CephFileSystem#delete`
 不读取该配置，因此回收站语义由 FN-23 与 ECO-CLI-06 自行拥有，不在本矩阵内。
 
-| 决策条件 | 期望行为 | 当前行为 | Guard / 用例 | Coverage |
-|---|---|---|---|---|
-| 路径不存在 | `false` | 符合 | — | UNIT + CONTRACT |
-| 文件 | 被删除，`true` | 符合 | — | UNIT |
-| 空目录，非递归 | 被删除，`true` | 符合 | — | UNIT |
-| 非空目录，非递归 | `PathIsNotEmptyDirectoryException` | 符合 | — | UNIT + CONTRACT |
-| 非空目录，递归 | 整棵子树被删除 | 符合；遍历非原子 | — | UNIT |
-| 根目录，非递归 | 返回 `false`，根目录与其子项均保留 | 符合 | — | UNIT + CLUSTER |
-| 根目录，递归 | 子项被删除，根目录保留 | 符合 | — | UNIT |
-| 递归遍历中途失败 | 有明确定义的返回值或异常 | **无定义；部分删除** | — | NONE |
-| 递归 delete 期间有子项被创建 | 不抛非预期错误，且最终状态可解释 | 未知 | FN-16 | NONE |
-| 100 层深的树，递归 | 成功 | 未知 | FN-05 | NONE |
-
 ## sync
 
-`hflush` 与 `hsync` 的开销差异属于性能问题，由 PERF-10 判定，不在本矩阵内。
+sync 的决策条件已迁移为 [`catalog.ndjson`](catalog.ndjson) 中 `SEM-SYNC-001` 至
+`SEM-SYNC-016` 的 `semantic` records。catalog 是这些条件的唯一 owner；本文不再复制表格。可从
+[首条 sync record](viewer/index.html#/record/SEM-SYNC-001) 开始浏览，或按轴查询：
 
-| 决策条件 | 期望行为 | 当前行为 | Guard / 用例 | Coverage |
-|---|---|---|---|---|
-| 跨缓冲区边界的缓冲写 | 所有字节按序送达 | 符合 | — | UNIT |
-| `hflush` | 已写数据对新开的 reader 可见 | 符合 | — | UNIT + CONTRACT |
-| `hsync` | 已写数据落到持久化 | 符合 | — | UNIT + CONTRACT |
-| `hflush` 与 `hsync` 的相对强度 | `hflush` 至少保证"对新 reader 可见"，允许与 `hsync` 同等强度 | 符合（源码判断）；`hflush` 直接委托 `hsync`，没有廉价的仅可见性 flush | — | NONE |
-| 普通 `flush()` | 排空缓冲区；不承诺持久化 | 符合（源码判断） | — | NONE |
-| 缓冲区为空时调用 `hsync` | 仍然发起 sync | 符合（源码判断） | — | NONE |
-| `close` | 排空、sync、释放；幂等 | 符合 | — | UNIT |
-| 排空失败之后再 `close` | 释放描述符并抛出错误 | 符合 | UT-11 | UNIT |
-| 排空失败且释放也失败 | 抛出第一个错误，第二个进 suppressed | 符合（源码判断） | UT-11 | NONE |
-| close 之后再 write/read/seek/sync | 以 `IOException` 拒绝 | 符合 | UT-12 | UNIT |
-| 底层写只接受了缓冲区的一部分 | 重试直到写完；返回 0 或超过请求量则为 `IOException` | 未知 | UT-10 | NONE |
-| 流声明的 capability | 声明支持 flush 与 sync | 符合 | — | UNIT |
-| 同一 mount 内 sync 之后的长度 | 立即反映出来 | 符合 | — | CONTRACT |
-| `hsync` 之后杀掉客户端 | 已 sync 的数据全部存活，且文件仍可 append | 未知 | FN-13 | NONE |
-| 任何 flush 之前杀掉客户端 | 允许丢数据，但长度与内容不得互相矛盾 | 未知 | FN-14 | NONE |
-| 高频小量 `hflush` | 吞吐可接受 | 未知 | PERF-10 | NONE |
+```bash
+python3 scripts/docs-catalog.py query --kind semantic --where axis=sync
+python3 scripts/docs-catalog.py show SEM-SYNC-001
+```
+
+`hflush` 与 `hsync` 的开销差异由 PERF-10 判定；`SEM-SYNC-016` 只保存这个验证目标与当前 `UNKNOWN`
+状态，不把尚未执行的性能探针写成兼容性结论。
 
 ## visibility
 
@@ -220,28 +197,27 @@ append 的起始位置同样源于 open 时刻的长度快照，该决策条件�
 
 ## append
 
-| 决策条件 | 期望行为 | 当前行为 | Guard / 用例 | Coverage |
-|---|---|---|---|---|
-| 已存在的文件 | 在末尾打开并追加 | 符合 | — | UNIT + CLUSTER |
-| 不存在的文件 | 拒绝；不创建该文件 | 符合 | — | UNIT |
-| 目录 | 以 `IOException` 拒绝 | 符合；但报出的类型是"路径不存在" | — | UNIT |
-| 另一个 writer 正在追加时报告的起始位置 | 反映真实长度 | **是 open 时刻的陈旧快照** | — | NONE |
-| shell 的 append 命令 | 经发行版 CLI 完成追加 | 未知 | ECO-CLI-04 | NONE |
+append 的决策条件已迁移为 [`catalog.ndjson`](catalog.ndjson) 中 `SEM-APPEND-001` 至
+`SEM-APPEND-005` 的 `semantic` records。catalog 是这些条件的唯一 owner；本文不再复制表格。可从
+[首条 append record](viewer/index.html#/record/SEM-APPEND-001) 开始浏览，或按轴查询：
+
+```bash
+python3 scripts/docs-catalog.py query --kind semantic --where axis=append
+python3 scripts/docs-catalog.py show SEM-APPEND-001
+```
+
+`FileSystem#append` 的流语义与发行版 shell 包装层是不同边界；CLI 的组合行为仍由 ECO-CLI-04 拥有。
 
 ## mkdirs
 
-| 决策条件 | 期望行为 | 当前行为 | Guard / 用例 | Coverage |
-|---|---|---|---|---|
-| 新目录 | 创建时应用 umask | 符合 | — | UNIT + CONTRACT |
-| 目标已经是目录 | `true`，幂等 | 符合 | — | UNIT |
-| 目标已经是文件 | `FileAlreadyExistsException` | 符合 | — | UNIT |
-| 父路径是文件 | `ParentNotDirectoryException` | 符合 | — | UNIT |
-| 被并发创建为目录 | `true`，幂等 | 符合 | — | UNIT |
-| 被并发创建为文件 | `FileAlreadyExistsException` | 符合 | — | UNIT |
-| 相对路径 | 按工作目录解析 | 符合 | — | UNIT |
-| 100 层深的树 | 创建成功且不栈溢出 | 未知 | FN-05 | NONE |
-| 官方 `FileContext` create-mkdir 套件 | 通过 | 未知 | CT-03 | NONE |
-| `FileSystem` 与 `FileContext` 的通用操作大套件 | 通过 | 未知 | CT-01, CT-02 | NONE |
+mkdirs 的决策条件已迁移为 [`catalog.ndjson`](catalog.ndjson) 中 `SEM-MKDIRS-001` 至
+`SEM-MKDIRS-010` 的 `semantic` records。catalog 是这些条件的唯一 owner；本文不再复制表格。可从
+[首条 mkdirs record](viewer/index.html#/record/SEM-MKDIRS-001) 开始浏览，或按轴查询：
+
+```bash
+python3 scripts/docs-catalog.py query --kind semantic --where axis=mkdirs
+python3 scripts/docs-catalog.py show SEM-MKDIRS-001
+```
 
 ## path-entrypoint
 

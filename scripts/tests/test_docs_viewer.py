@@ -58,10 +58,14 @@ class ViewerStaticTests(unittest.TestCase):
             '"#/record/"',
             '"#/case/"',
             "state.basisSources",
+            "state.axisBasisSources",
+            "record.axis_basis_sources",
             "resolver.symbols",
             "resolver.classes",
             "extractCaseSection",
             "catalogCaseReferences",
+            "semanticAxisSummary(semantics)",
+            "compactBasis(record.basis, record.axis)",
         )
         for fragment in required_fragments:
             with self.subTest(fragment=fragment):

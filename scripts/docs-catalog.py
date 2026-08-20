@@ -45,6 +45,13 @@ READINESS_STATUSES = frozenset(
     {"VERIFIED", "PARTIAL", "NOT_VERIFIED", "BLOCKED", "ACCEPTED_RISK"}
 )
 REQUIRED_RESOLVERS = frozenset({"record", "path", "case", "java", "url"})
+EXPECTED_RESOLVER_PREFIXES = {
+    "record": "record:",
+    "path": "path:",
+    "case": "case:",
+    "java": "java:",
+    "url": "url:",
+}
 BASIS_PATTERN = re.compile(r"^(?:HADOOP-SPEC|HDFS-\d+\.\d+\.\d+|PROJECT-ADR-\d{4})$")
 WINDOWS_DRIVE_PATTERN = re.compile(r"^[A-Za-z]:")
 LIMITATION_PATH_PATTERN = re.compile(
@@ -64,6 +71,7 @@ SPIKE_GUARD_PATTERN = re.compile(r"^case:(?:SP|ECO-[A-Z]+)-\d+$")
 REFERENCE_FIELDS = frozenset(
     {
         "guards",
+        "partial_guards",
         "tracking",
         "evidence",
         "latest_report",
@@ -72,9 +80,21 @@ REFERENCE_FIELDS = frozenset(
         "source",
     }
 )
-EXPECTED_SEMANTIC_IDS = frozenset(
-    "SEM-RENAME-{:03d}".format(index) for index in range(1, 28)
-)
+MIGRATED_SEMANTIC_COUNTS = {
+    "rename": 27,
+    "create": 21,
+    "delete": 10,
+    "sync": 16,
+    "append": 5,
+    "mkdirs": 10,
+}
+EXPECTED_SEMANTIC_IDS_BY_AXIS = {
+    axis: frozenset(
+        "SEM-{}-{:03d}".format(axis.upper(), index)
+        for index in range(1, count + 1)
+    )
+    for axis, count in MIGRATED_SEMANTIC_COUNTS.items()
+}
 CASE_HEADING_PATTERN = re.compile(
     r"^#{1,6}\s+((?:UT|CT|FN|REL-F|PERF|SOAK|COMPAT|SEC|OPS|NEG|SP|ECO-[A-Z]+)-\d+)\b"
 )
@@ -155,6 +175,14 @@ def _resolver_prefixes(
             "{}: 'reference_resolvers' is missing {}".format(label, ", ".join(missing))
         )
 
+    unexpected = sorted(set(raw).difference(REQUIRED_RESOLVERS))
+    if unexpected:
+        errors.append(
+            "{}: 'reference_resolvers' has unsupported resolvers: {}".format(
+                label, ", ".join(unexpected)
+            )
+        )
+
     prefixes: Dict[str, str] = {}
     for name, config in raw.items():
         if not isinstance(name, str) or not name:
@@ -170,6 +198,13 @@ def _resolver_prefixes(
             )
             continue
         prefixes[name] = prefix
+        expected_prefix = EXPECTED_RESOLVER_PREFIXES.get(name)
+        if expected_prefix is not None and prefix != expected_prefix:
+            errors.append(
+                "{}: resolver '{}' must use prefix '{}'".format(
+                    label, name, expected_prefix
+                )
+            )
 
     duplicate_prefixes = sorted(
         prefix for prefix in set(prefixes.values()) if list(prefixes.values()).count(prefix) > 1
@@ -235,6 +270,58 @@ def _repo_path_candidate(raw_path: str, repo_root: Path) -> Path:
     return candidate
 
 
+def _markdown_heading_anchors(path: Path) -> frozenset:
+    anchors = set()
+    occurrences: Dict[str, int] = {}
+    heading = re.compile(r"^ {0,3}#{1,6}[ \t]+(?P<text>.*?)[ \t]*#*[ \t]*$")
+    fence: Optional[str] = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith(("```", "~~~")):
+            marker = stripped[:3]
+            if fence is None:
+                fence = marker
+            elif marker == fence:
+                fence = None
+            continue
+        if fence is not None:
+            continue
+        match = heading.match(line)
+        if match is None:
+            continue
+        text = re.sub(r"<[^>]*>", "", match.group("text"))
+        slug = re.sub(r"[^\w\s-]", "", text.lower(), flags=re.UNICODE)
+        slug = re.sub(r"\s+", "-", slug.strip())
+        if not slug:
+            continue
+        occurrence = occurrences.get(slug, 0)
+        occurrences[slug] = occurrence + 1
+        anchors.add(slug if occurrence == 0 else "{}-{}".format(slug, occurrence))
+    return frozenset(anchors)
+
+
+def _validate_markdown_fragment(
+    raw_path: str, *, candidate: Path, label: str, errors: List[str]
+) -> None:
+    if "#" not in raw_path or candidate.suffix.lower() != ".md":
+        return
+    fragment = _repeated_unquote(raw_path.split("#", 1)[1])
+    if not fragment:
+        errors.append("{}: Markdown path fragment must not be empty".format(label))
+        return
+    try:
+        anchors = _markdown_heading_anchors(candidate)
+    except (OSError, UnicodeError) as exc:
+        errors.append("{}: cannot read Markdown target: {}".format(label, exc))
+        return
+    if fragment not in anchors:
+        errors.append(
+            "{}: Markdown heading fragment does not exist: #{}".format(
+                label, fragment
+            )
+        )
+
+
 def _validate_repo_path(
     raw_path: str,
     *,
@@ -250,6 +337,10 @@ def _validate_repo_path(
         return
     if require_exists and not candidate.exists():
         errors.append("{}: repository path does not exist: {}".format(label, raw_path))
+    elif require_exists and candidate.is_file():
+        _validate_markdown_fragment(
+            raw_path, candidate=candidate, label=label, errors=errors
+        )
 
 
 def _walk_strings(
@@ -357,6 +448,86 @@ def _load_case_ids(
     return frozenset(definitions)
 
 
+def _is_official_hadoop_336_url(reference: str, *, url_prefix: str) -> bool:
+    if not reference.startswith(url_prefix):
+        return False
+    parsed = urlparse(reference[len(url_prefix) :])
+    try:
+        port = parsed.port
+    except ValueError:
+        return False
+    if (
+        parsed.scheme != "https"
+        or parsed.username is not None
+        or parsed.password is not None
+        or port is not None
+        or parsed.query
+    ):
+        return False
+    decoded_path = _repeated_unquote(parsed.path)
+    if "\\" in decoded_path or ".." in PurePosixPath(decoded_path).parts:
+        return False
+    if parsed.hostname == "hadoop.apache.org":
+        return decoded_path.startswith("/docs/r3.3.6/")
+    if parsed.hostname == "github.com":
+        return bool(
+            re.match(
+                r"^/apache/hadoop/(?:blob|tree)/rel/release-3\.3\.6/[^/].*",
+                decoded_path,
+            )
+        )
+    return False
+
+
+def _is_official_hadoop_test_java_url(reference: str, *, url_prefix: str) -> bool:
+    if not _is_official_hadoop_336_url(reference, url_prefix=url_prefix):
+        return False
+    parsed = urlparse(reference[len(url_prefix) :])
+    decoded_path = _repeated_unquote(parsed.path)
+    return bool(
+        re.match(
+            r"^/apache/hadoop/blob/rel/release-3\.3\.6/[^/].*"
+            r"/src/test/java/[^/].*\.java$",
+            decoded_path,
+        )
+    )
+
+
+def _validate_basis_source(
+    basis_name: str,
+    reference: str,
+    *,
+    path_prefix: str,
+    url_prefix: str,
+    label: str,
+    errors: List[str],
+) -> None:
+    if basis_name in {"HADOOP-SPEC", "HDFS-3.3.6"}:
+        if not _is_official_hadoop_336_url(reference, url_prefix=url_prefix):
+            errors.append(
+                "{}: {} source must be an official Hadoop 3.3.6 URL".format(
+                    label, basis_name
+                )
+            )
+        return
+    match = re.fullmatch(r"PROJECT-ADR-(\d{4})", basis_name)
+    if match is None:
+        errors.append("{}: unsupported Basis source key: {}".format(label, basis_name))
+        return
+    number = match.group(1)
+    expected = re.compile(
+        r"^{}docs/adr/{}-[^/#?]+\.md(?:#[^\s]+)?$".format(
+            re.escape(path_prefix), number
+        )
+    )
+    if expected.fullmatch(reference) is None:
+        errors.append(
+            "{}: {} source must be the corresponding docs/adr/{}-*.md path".format(
+                label, basis_name, number
+            )
+        )
+
+
 def _load_java_index(
     meta: Mapping[str, Any],
     *,
@@ -402,6 +573,13 @@ def _load_java_index(
         except ValueError:
             errors.append("{}: Java class source is outside the test source root".format(class_label))
             continue
+        if class_name.rsplit(".", 1)[-1] != candidate.stem:
+            errors.append(
+                "{}: Java class key must match source stem '{}'".format(
+                    class_label, candidate.stem
+                )
+            )
+            continue
         try:
             class_sources[class_name] = candidate.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
@@ -417,8 +595,20 @@ def _load_java_index(
         ):
             errors.append("{}: invalid Class#method symbol key".format(symbol_label))
             continue
-        if not isinstance(reference, str) or not reference.startswith((path_prefix, url_prefix)):
-            errors.append("{}: symbol target must be a path: or url: reference".format(symbol_label))
+        if symbol_match.group("class") not in class_sources:
+            errors.append(
+                "{}: inherited Java symbol class has no valid local class mapping".format(
+                    symbol_label
+                )
+            )
+            continue
+        if not isinstance(reference, str) or not _is_official_hadoop_test_java_url(
+            reference, url_prefix=url_prefix
+        ):
+            errors.append(
+                "{}: inherited symbol target must be an official Hadoop 3.3.6 "
+                "test Java URL".format(symbol_label)
+            )
             continue
         symbols.add(symbol)
     return class_sources, frozenset(symbols)
@@ -499,7 +689,7 @@ def _validate_reference(
 
 
 def _validate_semantic(record: Mapping[str, Any], label: str, errors: List[str]) -> None:
-    for key in ("axis", "condition", "current"):
+    for key in ("axis", "api", "condition", "current"):
         _require_string(record, key, label, errors)
     if "expected" not in record:
         errors.append("{}: missing 'expected'".format(label))
@@ -527,7 +717,56 @@ def _validate_semantic(record: Mapping[str, Any], label: str, errors: List[str])
             errors.append("{}: coverage NONE cannot be combined with other values".format(label))
 
     guards = _require_string_list(record, "guards", label, errors)
+    partial_guards = None
+    if "partial_guards" in record:
+        partial_guards = _require_string_list(
+            record, "partial_guards", label, errors, non_empty=True
+        )
+        if partial_guards is not None and len(set(partial_guards)) != len(partial_guards):
+            errors.append("{}: 'partial_guards' must not contain duplicates".format(label))
+        if guards is not None and partial_guards is not None:
+            overlap = sorted(set(guards).intersection(partial_guards))
+            if overlap:
+                errors.append(
+                    "{}: guards and partial_guards overlap: {}".format(
+                        label, ", ".join(overlap)
+                    )
+                )
     tracking = _require_string_list(record, "tracking", label, errors)
+
+    for guard in (guards or []) + (partial_guards or []):
+        match = JAVA_GUARD_PATTERN.match(guard)
+        if match is not None and not match.group("method").startswith("test"):
+            errors.append(
+                "{}: semantic Java guard method must start with 'test': {}".format(
+                    label, guard
+                )
+            )
+
+    guard_roles = record.get("guard_roles", _MISSING)
+    if guard_roles is not _MISSING:
+        if not isinstance(guard_roles, dict) or not guard_roles:
+            errors.append("{}: 'guard_roles' must be a non-empty object".format(label))
+        else:
+            guard_keys = {
+                reference.split(":", 1)[1] if ":" in reference else reference
+                for reference in (guards or []) + (partial_guards or [])
+            }
+            for role_key, role in guard_roles.items():
+                if not isinstance(role_key, str) or not role_key:
+                    errors.append("{}: guard_roles keys must be non-empty strings".format(label))
+                elif role_key not in guard_keys:
+                    errors.append(
+                        "{}: guard_roles key has no matching guard: {}".format(
+                            label, role_key
+                        )
+                    )
+                if not isinstance(role, str) or not role.strip():
+                    errors.append(
+                        "{}: guard_roles.{} must be a non-empty string".format(
+                            label, role_key
+                        )
+                    )
     if classification == "DIFFERENT" and tracking is not None:
         if not any(
             LIMITATION_PATH_PATTERN.match(reference) or ADR_PATH_PATTERN.match(reference)
@@ -587,14 +826,24 @@ def _validate_run(record: Mapping[str, Any], label: str, errors: List[str]) -> N
     date = _require_string(record, "date", label, errors)
     if date is not None:
         try:
-            _datetime.date.fromisoformat(date)
+            parsed_date = _datetime.date.fromisoformat(date)
         except ValueError:
             errors.append("{}: 'date' must be an ISO calendar date".format(label))
+        else:
+            if parsed_date > _datetime.date.today():
+                errors.append("{}: run date must not be in the future".format(label))
     _require_string(record, "title", label, errors)
     status = _require_string(record, "status", label, errors)
     if status is not None and status not in RUN_STATUSES:
         errors.append("{}: invalid run status: {}".format(label, status))
-    for key in ("commands", "details", "integrity", "cleanup", "evidence"):
+    _require_string_list(
+        record,
+        "commands",
+        label,
+        errors,
+        non_empty=record.get("revision_unknown") is not True,
+    )
+    for key in ("details", "integrity", "cleanup", "evidence"):
         _require_string_list(record, key, label, errors)
     _require_string(record, "result", label, errors)
     commit = record.get("commit", _MISSING)
@@ -720,6 +969,7 @@ def _validate_canonical_scopes(
 
     available = frozenset(record_ids)
     covered = set()
+    scope_owners: Dict[str, List[int]] = {}
     for index, scope in enumerate(raw_scopes):
         scope_label = "{} canonical_scopes[{}]".format(label, index)
         if not isinstance(scope, dict):
@@ -736,11 +986,33 @@ def _validate_canonical_scopes(
         if any(not selector for selector in selectors):
             errors.append("{}: selectors must not be empty".format(scope_label))
             continue
+        scope_matches = set()
         for selector in selectors:
             matches = {record_id for record_id in available if fnmatch.fnmatchcase(record_id, selector)}
             if not matches:
                 errors.append("{}: selector matches no records: {}".format(scope_label, selector))
-            covered.update(matches)
+            scope_matches.update(matches)
+        covered.update(scope_matches)
+        for record_id in scope_matches:
+            scope_owners.setdefault(record_id, []).append(index)
+
+    multiply_owned = sorted(
+        (record_id, owners)
+        for record_id, owners in scope_owners.items()
+        if len(owners) > 1
+    )
+    if multiply_owned:
+        errors.append(
+            "{}: records matched by multiple canonical_scopes: {}".format(
+                label,
+                ", ".join(
+                    "{} ({})".format(
+                        record_id, ", ".join(str(owner) for owner in owners)
+                    )
+                    for record_id, owners in multiply_owned
+                ),
+            )
+        )
 
     uncovered = sorted(available.difference(covered))
     if uncovered:
@@ -769,24 +1041,117 @@ def validate_records(
 
     if "migration_baseline_commit" in first:
         _require_sha(first, "migration_baseline_commit", labels[0], errors)
+    historical_revision_unknown_runs = first.get(
+        "historical_revision_unknown_runs", []
+    )
+    if not isinstance(historical_revision_unknown_runs, list) or any(
+        not isinstance(record_id, str) or not record_id
+        for record_id in historical_revision_unknown_runs
+    ):
+        errors.append(
+            "{}: 'historical_revision_unknown_runs' must be a string array".format(
+                labels[0]
+            )
+        )
+        historical_revision_unknown_runs = []
+    elif len(set(historical_revision_unknown_runs)) != len(
+        historical_revision_unknown_runs
+    ):
+        errors.append(
+            "{}: 'historical_revision_unknown_runs' must not contain duplicates".format(
+                labels[0]
+            )
+        )
+    has_semantics = any(
+        isinstance(record, dict) and record.get("kind") == "semantic"
+        for record in records
+    )
     basis_sources = first.get("basis_sources")
-    if basis_sources is not None:
-        if not isinstance(basis_sources, dict) or not basis_sources:
-            errors.append("{}: 'basis_sources' must be a non-empty object".format(labels[0]))
-        else:
-            for basis_name, references in basis_sources.items():
+    if has_semantics and (not isinstance(basis_sources, dict) or not basis_sources):
+        errors.append(
+            "{}: semantic records require 'basis_sources' as a non-empty object".format(
+                labels[0]
+            )
+        )
+    elif basis_sources is not None and not isinstance(basis_sources, dict):
+        errors.append("{}: 'basis_sources' must be an object".format(labels[0]))
+    if isinstance(basis_sources, dict):
+        for basis_name, references in basis_sources.items():
+            if not isinstance(basis_name, str) or not BASIS_PATTERN.match(basis_name):
+                errors.append("{}: invalid basis_sources key: {}".format(labels[0], basis_name))
+            if not isinstance(references, list) or not references or any(
+                not isinstance(reference, str) or not reference for reference in references
+            ):
+                errors.append(
+                    "{}: basis_sources.{} must be a non-empty string array".format(
+                        labels[0], basis_name
+                    )
+                )
+
+    axis_basis_sources = first.get("axis_basis_sources", _MISSING)
+    if axis_basis_sources is not _MISSING and (
+        not isinstance(axis_basis_sources, dict) or not axis_basis_sources
+    ):
+        errors.append("{}: 'axis_basis_sources' must be a non-empty object".format(labels[0]))
+    if isinstance(axis_basis_sources, dict):
+        for axis, axis_sources in axis_basis_sources.items():
+            axis_label = "{} axis_basis_sources.{}".format(labels[0], axis)
+            if axis not in MIGRATED_SEMANTIC_COUNTS:
+                errors.append(
+                    "{}: axis is not in the migrated semantic inventory".format(
+                        axis_label
+                    )
+                )
+            if not isinstance(axis_sources, dict) or not axis_sources:
+                errors.append("{} must be a non-empty object".format(axis_label))
+                continue
+            for basis_name, references in axis_sources.items():
+                basis_label = "{}.{}".format(axis_label, basis_name)
                 if not isinstance(basis_name, str) or not BASIS_PATTERN.match(basis_name):
-                    errors.append("{}: invalid basis_sources key: {}".format(labels[0], basis_name))
+                    errors.append("{}: invalid Basis key".format(basis_label))
                 if not isinstance(references, list) or not references or any(
                     not isinstance(reference, str) or not reference for reference in references
                 ):
-                    errors.append(
-                        "{}: basis_sources.{} must be a non-empty string array".format(
-                            labels[0], basis_name
-                        )
-                    )
+                    errors.append("{} must be a non-empty string array".format(basis_label))
 
     prefixes = _resolver_prefixes(first, labels[0], errors)
+    path_prefix = prefixes.get("path", "path:")
+    url_prefix = prefixes.get("url", "url:")
+    if isinstance(basis_sources, dict):
+        for basis_name, references in basis_sources.items():
+            if not isinstance(basis_name, str) or not isinstance(references, list):
+                continue
+            for index, reference in enumerate(references):
+                if isinstance(reference, str) and reference:
+                    _validate_basis_source(
+                        basis_name,
+                        reference,
+                        path_prefix=path_prefix,
+                        url_prefix=url_prefix,
+                        label="{} basis_sources.{}[{}]".format(
+                            labels[0], basis_name, index
+                        ),
+                        errors=errors,
+                    )
+    if isinstance(axis_basis_sources, dict):
+        for axis, axis_sources in axis_basis_sources.items():
+            if not isinstance(axis_sources, dict):
+                continue
+            for basis_name, references in axis_sources.items():
+                if not isinstance(basis_name, str) or not isinstance(references, list):
+                    continue
+                for index, reference in enumerate(references):
+                    if isinstance(reference, str) and reference:
+                        _validate_basis_source(
+                            basis_name,
+                            reference,
+                            path_prefix=path_prefix,
+                            url_prefix=url_prefix,
+                            label="{} axis_basis_sources.{}.{}[{}]".format(
+                                labels[0], axis, basis_name, index
+                            ),
+                            errors=errors,
+                        )
     external_raw = first.get("external_reference_prefixes", [])
     external_prefixes = frozenset(external_raw if isinstance(external_raw, list) else [])
 
@@ -818,8 +1183,21 @@ def validate_records(
             _validate_project(record, label, errors)
         elif kind == "semantic":
             _validate_semantic(record, label, errors)
-            if record.get("axis") != "rename":
-                errors.append("{}: only the rename semantic axis is migrated".format(label))
+            axis = record.get("axis")
+            if isinstance(axis, str) and axis not in MIGRATED_SEMANTIC_COUNTS:
+                errors.append("{}: semantic axis is not migrated: {}".format(label, axis))
+            elif (
+                isinstance(axis, str)
+                and record_id is not None
+                and record_id not in EXPECTED_SEMANTIC_IDS_BY_AXIS[axis]
+            ):
+                count = MIGRATED_SEMANTIC_COUNTS[axis]
+                errors.append(
+                    "{}: semantic id '{}' does not match axis '{}'; expected range "
+                    "SEM-{}-001..{:03d}".format(
+                        label, record_id, axis, axis.upper(), count
+                    )
+                )
         elif kind == "baseline":
             _validate_baseline(record, label, errors)
         elif kind == "work":
@@ -837,20 +1215,59 @@ def validate_records(
         elif kind == "run":
             _validate_run(record, label, errors)
 
-    semantic_ids = frozenset(
-        record.get("id")
-        for record in records
-        if record.get("kind") == "semantic" and isinstance(record.get("id"), str)
-    )
-    if semantic_ids != EXPECTED_SEMANTIC_IDS:
-        missing = sorted(EXPECTED_SEMANTIC_IDS.difference(semantic_ids))
-        unexpected = sorted(semantic_ids.difference(EXPECTED_SEMANTIC_IDS))
+    semantic_ids_by_axis = {
+        axis: frozenset(
+            record.get("id")
+            for record in records
+            if record.get("kind") == "semantic"
+            and record.get("axis") == axis
+            and isinstance(record.get("id"), str)
+        )
+        for axis in MIGRATED_SEMANTIC_COUNTS
+    }
+    for axis, count in MIGRATED_SEMANTIC_COUNTS.items():
+        expected_ids = EXPECTED_SEMANTIC_IDS_BY_AXIS[axis]
+        observed_ids = semantic_ids_by_axis[axis]
+        if observed_ids == expected_ids:
+            continue
+        missing = sorted(expected_ids.difference(observed_ids))
+        unexpected = sorted(observed_ids.difference(expected_ids))
         details = []
         if missing:
             details.append("missing {}".format(", ".join(missing)))
         if unexpected:
             details.append("unexpected {}".format(", ".join(unexpected)))
-        errors.append("semantic inventory must be SEM-RENAME-001..027: {}".format("; ".join(details)))
+        errors.append(
+            "semantic inventory for '{}' must be SEM-{}-001..{:03d}: {}".format(
+                axis, axis.upper(), count, "; ".join(details)
+            )
+        )
+
+    observed_revision_unknown_runs = {
+        record.get("id")
+        for record in records
+        if record.get("kind") == "run"
+        and record.get("revision_unknown") is True
+        and isinstance(record.get("id"), str)
+    }
+    declared_revision_unknown_runs = set(historical_revision_unknown_runs)
+    if observed_revision_unknown_runs != declared_revision_unknown_runs:
+        missing = sorted(
+            observed_revision_unknown_runs.difference(declared_revision_unknown_runs)
+        )
+        stale = sorted(
+            declared_revision_unknown_runs.difference(observed_revision_unknown_runs)
+        )
+        details = []
+        if missing:
+            details.append("undeclared {}".format(", ".join(missing)))
+        if stale:
+            details.append("not revision_unknown runs {}".format(", ".join(stale)))
+        errors.append(
+            "{}: historical revision_unknown run inventory mismatch: {}".format(
+                labels[0], "; ".join(details)
+            )
+        )
 
     non_meta_ids = [
         record["id"]
@@ -881,19 +1298,65 @@ def validate_records(
         errors=errors,
     )
 
-    if isinstance(basis_sources, dict):
-        for record, label in zip(records, labels):
-            if record.get("kind") != "semantic" or not isinstance(record.get("basis"), list):
+    for record, label in zip(records, labels):
+        if record.get("kind") != "semantic" or not isinstance(record.get("basis"), list):
+            continue
+        axis = record.get("axis")
+        axis_sources = (
+            axis_basis_sources.get(axis)
+            if isinstance(axis_basis_sources, dict) and isinstance(axis, str)
+            else None
+        )
+        for basis_name in record["basis"]:
+            if not isinstance(basis_name, str):
                 continue
-            for basis_name in record["basis"]:
-                if not isinstance(basis_name, str):
+            if isinstance(axis_basis_sources, dict):
+                if isinstance(axis_sources, dict) and basis_name in axis_sources:
                     continue
-                if basis_name not in basis_sources:
-                    errors.append(
-                        "{}: basis '{}' has no entry in meta.basis_sources".format(
-                            label, basis_name
-                        )
+                if (
+                    basis_name.startswith("PROJECT-ADR-")
+                    and isinstance(basis_sources, dict)
+                    and basis_name in basis_sources
+                ):
+                    continue
+                errors.append(
+                    "{}: basis '{}' has no entry in meta.axis_basis_sources.{}".format(
+                        label, basis_name, axis
                     )
+                )
+            elif not isinstance(basis_sources, dict) or basis_name not in basis_sources:
+                errors.append(
+                    "{}: basis '{}' has no entry in meta.basis_sources".format(
+                        label, basis_name
+                    )
+                )
+
+    if isinstance(axis_basis_sources, dict):
+        for axis in MIGRATED_SEMANTIC_COUNTS:
+            axis_sources = axis_basis_sources.get(axis)
+            used_basis = {
+                basis_name
+                for record in records
+                if record.get("kind") == "semantic"
+                and record.get("axis") == axis
+                and isinstance(record.get("basis"), list)
+                for basis_name in record["basis"]
+                if isinstance(basis_name, str)
+                and not basis_name.startswith("PROJECT-ADR-")
+            }
+            configured_basis = set(axis_sources) if isinstance(axis_sources, dict) else set()
+            if configured_basis != used_basis:
+                missing = sorted(used_basis.difference(configured_basis))
+                unused = sorted(configured_basis.difference(used_basis))
+                details = []
+                if missing:
+                    details.append("missing {}".format(", ".join(missing)))
+                if unused:
+                    details.append("unused {}".format(", ".join(unused)))
+                errors.append(
+                    "{} axis_basis_sources.{} keys must equal the used non-project "
+                    "Basis set: {}".format(labels[0], axis, "; ".join(details))
+                )
 
     frozen_ids = frozenset(ids)
     path_fields = {"path", "report", "latest_report", "source_path", "destination_path"}

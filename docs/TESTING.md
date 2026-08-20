@@ -41,8 +41,9 @@ status and the concise operational journal are structured records in
 - A definition without explicit steps is executed as: establish the required environment, perform the
   operation named by the heading, then record inputs, outputs, errors, resource state, and cleanup.
 - The semantic baseline owns expected behavior, its basis, current-behavior classification, exact
-  guards, and structural Coverage per decision condition. Migrated records live in
-  [catalog.ndjson](catalog.ndjson), while not-yet-migrated axes remain in
+  guards, and structural Coverage per decision condition. The six migrated operation axes—rename,
+  create, delete, sync, append, and mkdirs—live as records in [catalog.ndjson](catalog.ndjson).
+  Visibility, identity, path-entrypoint, metadata, read, status-defaults, and block-location remain in
   [SEMANTICS-MATRIX.md](SEMANTICS-MATRIX.md). Coverage does not carry execution state. A case whose
   expectation is decision-level delegates to the baseline instead of restating it, and its expected
   result is then the union of the records or rows citing that case.

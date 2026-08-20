@@ -19,7 +19,9 @@ narrow ownership boundary and a reversible migration.
 Add `docs/catalog.ndjson` as the canonical source for the records explicitly listed in its metadata.
 Use one self-contained JSON object per line, a schema identifier, globally unique stable IDs, and
 typed reference prefixes. The first metadata record defines how internal record links, repository
-paths, test IDs, Java test methods, and external URLs are resolved.
+paths, test IDs, Java test methods, and external URLs are resolved. Basis sources may be global or
+scoped to one semantic axis; an axis-specific mapping takes precedence, with the global mapping as
+the fallback.
 
 Markdown and the HTTP page are projections of catalog facts, not parallel fact owners. Derived
 counts, reverse references, filters, and summaries are computed from the records. Narrative portions
@@ -41,17 +43,26 @@ owned by dated reports, and readiness status changes continue to follow `docs/TE
 
 ## Experimental migration scope
 
-The first migration is deliberately limited to:
+The semantic portion of the experiment is deliberately limited to six operation axes from
+`docs/SEMANTICS-MATRIX.md`:
 
-- the 27 rename decisions from `docs/SEMANTICS-MATRIX.md`;
+- `SEM-RENAME-001` through `SEM-RENAME-027`;
+- `SEM-CREATE-001` through `SEM-CREATE-021`;
+- `SEM-DELETE-001` through `SEM-DELETE-010`;
+- `SEM-SYNC-001` through `SEM-SYNC-016`;
+- `SEM-APPEND-001` through `SEM-APPEND-005`; and
+- `SEM-MKDIRS-001` through `SEM-MKDIRS-010`.
+
+The other migrated scopes remain:
+
 - the project snapshot metadata plus baseline, active work, blocker, release risk, evidence request,
   and operating constraint tables from `PROGRESS.md`;
 - the area and milestone tables from `docs/READINESS.md`; and
 - experiment entries committed at baseline `6b50da9` from `EXPERIMENTS.md`.
 
-Report and archive bodies are not imported. Other semantic axes, test definitions, limitations,
-environment descriptions, and general prose are deferred until this experiment establishes that the
-format is easier to review and maintain.
+Report and archive bodies are not imported. Visibility, identity, path-entrypoint, metadata, read,
+status-defaults, block-location, test definitions, limitations, environment descriptions, and general
+prose are deferred until this experiment establishes that the format is easier to review and maintain.
 
 ## Alternatives considered
 

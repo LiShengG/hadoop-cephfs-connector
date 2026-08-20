@@ -1,5 +1,6 @@
 import copy
 import contextlib
+import datetime as dt
 import importlib.util
 import io
 import json
@@ -21,6 +22,28 @@ def meta_record():
         "kind": "meta",
         "id": "CATALOG",
         "schema": "hadoop-cephfs-docs/v1",
+        "historical_revision_unknown_runs": [],
+        "basis_sources": {
+            "HADOOP-SPEC": [
+                "url:https://hadoop.apache.org/docs/r3.3.6/"
+                "hadoop-project-dist/hadoop-common/filesystem/filesystem.html"
+            ],
+            "HDFS-3.3.6": [
+                "url:https://github.com/apache/hadoop/tree/rel/release-3.3.6/"
+                "hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs"
+            ],
+            "PROJECT-ADR-0004": ["path:docs/adr/0004-example.md"],
+        },
+        "axis_basis_sources": {
+            axis: {
+                "HDFS-3.3.6": [
+                    "url:https://github.com/apache/hadoop/blob/rel/release-3.3.6/"
+                    "hadoop-hdfs-project/hadoop-hdfs/src/main/java/"
+                    "org/apache/hadoop/hdfs/{}.java".format(axis)
+                ]
+            }
+            for axis in docs_catalog.MIGRATED_SEMANTIC_COUNTS
+        },
         "reference_resolvers": {
             "record": {"prefix": "record:", "route": "#/record/{id}"},
             "path": {"prefix": "path:", "base": "."},
@@ -34,10 +57,17 @@ def meta_record():
             "java": {
                 "prefix": "java:",
                 "classes": {
-                    "TestRename": "path:hadoop-cephfs/src/test/java/TestRename.java"
+                    "TestRename": "path:hadoop-cephfs/src/test/java/TestRename.java",
+                    "ITestCephContractRename": (
+                        "path:hadoop-cephfs/src/test/java/ITestCephContractRename.java"
+                    ),
                 },
                 "symbols": {
-                    "ITestCephContractRename#testInherited": "url:https://example.test/AbstractContractRenameTest.java"
+                    "ITestCephContractRename#testInherited": (
+                        "url:https://github.com/apache/hadoop/blob/rel/release-3.3.6/"
+                        "hadoop-common-project/hadoop-common/src/test/java/org/apache/"
+                        "hadoop/fs/contract/AbstractContractRenameTest.java"
+                    )
                 },
             },
             "url": {"prefix": "url:"},
@@ -49,11 +79,12 @@ def meta_record():
     }
 
 
-def semantic_record():
+def semantic_record(axis="rename", index=1):
     return {
         "kind": "semantic",
-        "id": "SEM-RENAME-001",
-        "axis": "rename",
+        "id": "SEM-{}-{:03d}".format(axis.upper(), index),
+        "axis": axis,
+        "api": "FileSystem#rename",
         "condition": "regular file src equals dst",
         "expected": True,
         "basis": ["HDFS-3.3.6"],
@@ -68,10 +99,8 @@ def semantic_record():
 
 def semantic_records():
     records = []
-    for index in range(1, 28):
-        record = semantic_record()
-        record["id"] = "SEM-RENAME-{:03d}".format(index)
-        records.append(record)
+    for axis, count in docs_catalog.MIGRATED_SEMANTIC_COUNTS.items():
+        records.extend(semantic_record(axis, index) for index in range(1, count + 1))
     return records
 
 
@@ -98,7 +127,9 @@ class CatalogTestCase(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         (self.root / "docs").mkdir()
-        (self.root / "docs/source.md").write_text("# Source\n", encoding="utf-8")
+        (self.root / "docs/source.md").write_text(
+            "# Source\n\n## Result\n", encoding="utf-8"
+        )
         (self.root / "docs/KNOWN-LIMITATIONS.md").write_text(
             "# Known limitations\n", encoding="utf-8"
         )
@@ -118,11 +149,16 @@ class CatalogTestCase(unittest.TestCase):
         java_root.mkdir(parents=True)
         (java_root / "TestRename.java").write_text(
             "class TestRename {\n"
+            "  public void setUp() {}\n"
             "  public void testSelfRename() {}\n"
             "  protected static void protectedHelper() {}\n"
             "  void helper() { calledOnly(); }\n"
             "  // public void commentedOnly() {}\n"
             "}\n",
+            encoding="utf-8",
+        )
+        (java_root / "ITestCephContractRename.java").write_text(
+            "class ITestCephContractRename {}\n",
             encoding="utf-8",
         )
         for root_file in ("README.md", "PROGRESS.md", "EXPERIMENTS.md"):
@@ -178,10 +214,60 @@ class ParserTests(CatalogTestCase):
 class ValidationTests(CatalogTestCase):
     def test_valid_catalog_loads(self):
         loaded = docs_catalog.load_catalog(self.catalog, repo_root=self.root)
-        self.assertEqual(29, len(loaded))
+        self.assertEqual(91, len(loaded))
         self.assertEqual("CATALOG", loaded[0]["id"])
-        self.assertEqual("SEM-RENAME-027", loaded[-2]["id"])
+        self.assertEqual("SEM-MKDIRS-010", loaded[-2]["id"])
         self.assertEqual("RUN-20260820-DOC-GATE", loaded[-1]["id"])
+
+    def test_schema_v1_resolver_names_and_prefixes_are_fixed(self):
+        meta = meta_record()
+        meta["reference_resolvers"]["java"]["prefix"] = "j:"
+        self.write_records([meta, *semantic_records()])
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError,
+            "resolver 'java' must use prefix 'java:'",
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+        meta = meta_record()
+        meta["reference_resolvers"]["opaque-java"] = {"prefix": "opaque:"}
+        self.write_records([meta, *semantic_records()])
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError,
+            "unsupported resolvers: opaque-java",
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+    def test_migrated_semantic_inventory_has_fixed_axis_ranges(self):
+        self.assertEqual(
+            {
+                "rename": 27,
+                "create": 21,
+                "delete": 10,
+                "sync": 16,
+                "append": 5,
+                "mkdirs": 10,
+            },
+            docs_catalog.MIGRATED_SEMANTIC_COUNTS,
+        )
+        for axis, count in docs_catalog.MIGRATED_SEMANTIC_COUNTS.items():
+            with self.subTest(axis=axis):
+                self.assertEqual(
+                    {
+                        "SEM-{}-{:03d}".format(axis.upper(), index)
+                        for index in range(1, count + 1)
+                    },
+                    set(docs_catalog.EXPECTED_SEMANTIC_IDS_BY_AXIS[axis]),
+                )
+
+    def test_semantic_api_is_required(self):
+        records = copy.deepcopy(self.records)
+        del records[1]["api"]
+        self.write_records(records)
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError, "'api' must be a non-empty string"
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
 
     def test_readiness_accepts_accepted_risk(self):
         readiness = {
@@ -196,6 +282,36 @@ class ValidationTests(CatalogTestCase):
         self.write_records(self.records_with(readiness))
         loaded = docs_catalog.load_catalog(self.catalog, repo_root=self.root)
         self.assertEqual("ACCEPTED_RISK", loaded[-1]["status"])
+
+    def test_revision_unknown_runs_require_explicit_historical_inventory(self):
+        historical = run_record("RUN-20260816-HISTORICAL")
+        del historical["commit"]
+        historical["revision_unknown"] = True
+        historical["commands"] = []
+        records = self.records_with(historical)
+        records[0]["historical_revision_unknown_runs"] = [historical["id"]]
+        self.write_records(records)
+        loaded = docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+        self.assertTrue(loaded[-1]["revision_unknown"])
+
+        records[0]["historical_revision_unknown_runs"] = []
+        self.write_records(records)
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError,
+            "historical revision_unknown run inventory mismatch",
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+        records[0]["historical_revision_unknown_runs"] = [
+            historical["id"],
+            "RUN-20260816-NOT-PRESENT",
+        ]
+        self.write_records(records)
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError,
+            "not revision_unknown runs RUN-20260816-NOT-PRESENT",
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
 
     def test_invalid_json_reports_physical_line(self):
         self.catalog.write_text(json.dumps(meta_record()) + "\n{" + "\n", encoding="utf-8")
@@ -233,6 +349,40 @@ class ValidationTests(CatalogTestCase):
         ):
             docs_catalog.load_catalog(self.catalog, repo_root=self.root)
 
+    def test_partial_guard_and_role_must_resolve_to_the_same_guard(self):
+        records = copy.deepcopy(self.records)
+        records[1]["partial_guards"] = ["case:FN-18"]
+        records[1]["guard_roles"] = {"FN-18": "planned, not executable"}
+        self.write_records(records)
+        loaded = docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+        self.assertEqual(["case:FN-18"], loaded[1]["partial_guards"])
+
+        records[1]["guard_roles"] = {"FN-17": "not one of this record's guards"}
+        self.write_records(records)
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError,
+            "guard_roles key has no matching guard: FN-17",
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+    def test_partial_guards_are_distinct_resolvable_references(self):
+        records = copy.deepcopy(self.records)
+        records[1]["partial_guards"] = ["java:TestRename#testSelfRename"]
+        self.write_records(records)
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError,
+            "guards and partial_guards overlap",
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+        records[1]["partial_guards"] = ["not-a-reference"]
+        self.write_records(records)
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError,
+            "unresolved or unapproved reference",
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
     def test_project_basis_requires_corresponding_adr_tracking(self):
         record = semantic_record()
         record["basis"] = ["PROJECT-ADR-0004"]
@@ -243,6 +393,170 @@ class ValidationTests(CatalogTestCase):
             "basis PROJECT-ADR-0004 requires the corresponding ADR path",
         ):
             docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+    def test_semantics_require_resolvable_global_basis_sources(self):
+        meta = meta_record()
+        meta.pop("basis_sources")
+        self.write_records([meta, *semantic_records()])
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError,
+            "semantic records require 'basis_sources'",
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+        invalid_sources = [
+            ("bare-source", "must be an official Hadoop 3.3.6 URL"),
+            ("record:SEM-RENAME-001", "must be an official Hadoop 3.3.6 URL"),
+            ("path:docs/missing.md", "must be an official Hadoop 3.3.6 URL"),
+            ("url:not-an-absolute-url", "must be an official Hadoop 3.3.6 URL"),
+        ]
+        for source, expected_error in invalid_sources:
+            with self.subTest(source=source):
+                meta = meta_record()
+                meta["basis_sources"]["HDFS-3.3.6"] = [source]
+                meta.pop("axis_basis_sources")
+                self.write_records([meta, *semantic_records()])
+                with self.assertRaisesRegex(
+                    docs_catalog.CatalogValidationError, expected_error
+                ):
+                    docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+    def test_axis_basis_sources_are_validated_and_preferred(self):
+        meta = meta_record()
+        meta.pop("axis_basis_sources")
+        self.write_records([meta, *semantic_records()])
+        docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+        meta = meta_record()
+        del meta["basis_sources"]["HDFS-3.3.6"]
+        self.write_records([meta, *semantic_records()])
+        docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+        invalid_axis_sources = [
+            ("bare-source", "must be an official Hadoop 3.3.6 URL"),
+            ("path:docs/missing.md", "must be an official Hadoop 3.3.6 URL"),
+            ("url:not-an-absolute-url", "must be an official Hadoop 3.3.6 URL"),
+        ]
+        for source, expected_error in invalid_axis_sources:
+            with self.subTest(source=source):
+                meta = meta_record()
+                meta["axis_basis_sources"]["create"]["HDFS-3.3.6"] = [source]
+                self.write_records([meta, *semantic_records()])
+                with self.assertRaisesRegex(
+                    docs_catalog.CatalogValidationError, expected_error
+                ):
+                    docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+        meta = meta_record()
+        del meta["axis_basis_sources"]["create"]["HDFS-3.3.6"]
+        self.write_records([meta, *semantic_records()])
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError,
+            "basis 'HDFS-3.3.6' has no entry in meta.axis_basis_sources.create",
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+    def test_axis_basis_sources_reject_invalid_shapes_and_axes(self):
+        invalid_values = [None, [], {}]
+        for value in invalid_values:
+            with self.subTest(value=value):
+                meta = meta_record()
+                meta["axis_basis_sources"] = value
+                self.write_records([meta, *semantic_records()])
+                with self.assertRaisesRegex(
+                    docs_catalog.CatalogValidationError,
+                    "'axis_basis_sources' must be a non-empty object",
+                ):
+                    docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+        meta = meta_record()
+        meta["axis_basis_sources"]["visibility"] = {
+            "HDFS-3.3.6": ["url:https://example.test/visibility.java"]
+        }
+        self.write_records([meta, *semantic_records()])
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError,
+            "axis_basis_sources.visibility: axis is not in the migrated semantic inventory",
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+        meta = meta_record()
+        meta["axis_basis_sources"]["create"] = []
+        self.write_records([meta, *semantic_records()])
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError,
+            "axis_basis_sources.create must be a non-empty object",
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+    def test_basis_sources_reject_wrong_hosts_releases_and_adr_paths(self):
+        cases = [
+            (
+                "HADOOP-SPEC",
+                "url:https://example.test/docs/r3.3.6/filesystem.html",
+                "must be an official Hadoop 3.3.6 URL",
+            ),
+            (
+                "HDFS-3.3.6",
+                "url:https://github.com/apache/hadoop/blob/rel/release-3.4.0/"
+                "hadoop-hdfs-project/hadoop-hdfs/src/main/java/HdfsSource.java",
+                "must be an official Hadoop 3.3.6 URL",
+            ),
+            (
+                "HDFS-3.3.6",
+                "url:https://github.com/apache/hadoop/blob/rel/release-3.3.6/"
+                "%2e%2e/main/HdfsSource.java",
+                "must be an official Hadoop 3.3.6 URL",
+            ),
+            (
+                "PROJECT-ADR-0004",
+                "path:docs/adr/0005-wrong.md",
+                r"must be the corresponding docs/adr/0004-\*.md path",
+            ),
+        ]
+        (self.root / "docs/adr/0005-wrong.md").write_text(
+            "# Wrong ADR\n", encoding="utf-8"
+        )
+        for basis_name, source, expected_error in cases:
+            with self.subTest(basis=basis_name, source=source):
+                meta = meta_record()
+                meta["basis_sources"][basis_name] = [source]
+                self.write_records([meta, *semantic_records()])
+                with self.assertRaisesRegex(
+                    docs_catalog.CatalogValidationError, expected_error
+                ):
+                    docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+    def test_axis_basis_source_keys_equal_used_non_project_basis(self):
+        meta = meta_record()
+        del meta["axis_basis_sources"]["create"]["HDFS-3.3.6"]
+        self.write_records([meta, *semantic_records()])
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError,
+            "axis_basis_sources.create keys must equal the used non-project Basis set: "
+            "missing HDFS-3.3.6",
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+        meta = meta_record()
+        meta["axis_basis_sources"]["sync"]["HADOOP-SPEC"] = [
+            "url:https://hadoop.apache.org/docs/r3.3.6/"
+            "hadoop-project-dist/hadoop-common/filesystem/filesystem.html"
+        ]
+        self.write_records([meta, *semantic_records()])
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError,
+            "axis_basis_sources.sync keys must equal the used non-project Basis set: "
+            "unused HADOOP-SPEC",
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+    def test_project_basis_can_fall_back_to_global_source(self):
+        records = semantic_records()
+        records[0]["basis"] = ["PROJECT-ADR-0004"]
+        records[0]["tracking"] = ["path:docs/adr/0004-example.md"]
+        self.write_records([meta_record(), *records])
+        docs_catalog.load_catalog(self.catalog, repo_root=self.root)
 
     def test_each_coverage_type_requires_its_specific_guard(self):
         cases = [
@@ -276,6 +590,18 @@ class ValidationTests(CatalogTestCase):
         ):
             docs_catalog.load_catalog(self.catalog, repo_root=self.root)
 
+    def test_semantic_java_guards_must_name_test_methods(self):
+        for field in ("guards", "partial_guards"):
+            with self.subTest(field=field):
+                records = copy.deepcopy(self.records)
+                records[1][field] = ["java:TestRename#setUp"]
+                self.write_records(records)
+                with self.assertRaisesRegex(
+                    docs_catalog.CatalogValidationError,
+                    "semantic Java guard method must start with 'test'",
+                ):
+                    docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
     def test_none_coverage_cannot_be_combined(self):
         record = semantic_record()
         record["coverage"] = ["NONE", "UNIT"]
@@ -295,6 +621,24 @@ class ValidationTests(CatalogTestCase):
         message = str(raised.exception)
         self.assertIn("must not contain '..'", message)
         self.assertIn("unresolved record reference", message)
+
+    def test_markdown_path_fragments_must_name_real_headings(self):
+        (self.root / "docs/source.md").write_text(
+            "# Source\n\n## Result\n\n```text\n## not-a-heading\n```\n",
+            encoding="utf-8",
+        )
+        records = copy.deepcopy(self.records)
+        records[-1]["evidence"] = ["path:docs/source.md#result"]
+        self.write_records(records)
+        docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+        records[-1]["evidence"] = ["path:docs/source.md#not-a-heading"]
+        self.write_records(records)
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError,
+            "Markdown heading fragment does not exist: #not-a-heading",
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
 
     def test_bare_explicit_reference_must_resolve(self):
         record = semantic_record()
@@ -532,7 +876,7 @@ class ValidationTests(CatalogTestCase):
     def test_every_record_must_be_covered_by_a_canonical_scope(self):
         meta = meta_record()
         meta["canonical_scopes"] = [
-            {"records": "SEM-RENAME-*", "projection": "path:docs/source.md"}
+            {"records": "SEM-*", "projection": "path:docs/source.md"}
         ]
         self.write_records([meta, *semantic_records(), run_record()])
         with self.assertRaisesRegex(
@@ -541,12 +885,48 @@ class ValidationTests(CatalogTestCase):
         ):
             docs_catalog.load_catalog(self.catalog, repo_root=self.root)
 
+    def test_record_must_not_match_multiple_canonical_scopes(self):
+        meta = meta_record()
+        meta["canonical_scopes"] = [
+            {"records": "*", "projection": "path:docs/source.md"},
+            {"records": "SEM-*", "projection": "path:docs/source.md"},
+        ]
+        self.write_records([meta, *semantic_records(), run_record()])
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError,
+            "records matched by multiple canonical_scopes: SEM-APPEND-001",
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
     def test_semantic_inventory_is_exact(self):
         records = semantic_records()[:-1]
         self.write_records([meta_record(), *records])
         with self.assertRaisesRegex(
             docs_catalog.CatalogValidationError,
-            "semantic inventory must be SEM-RENAME-001..027: missing SEM-RENAME-027",
+            "semantic inventory for 'mkdirs' must be SEM-MKDIRS-001..010: "
+            "missing SEM-MKDIRS-010",
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+    def test_semantic_id_must_match_axis_even_when_global_ids_are_unchanged(self):
+        records = semantic_records()
+        create = next(record for record in records if record["id"] == "SEM-CREATE-001")
+        delete = next(record for record in records if record["id"] == "SEM-DELETE-001")
+        create["axis"], delete["axis"] = delete["axis"], create["axis"]
+        self.write_records([meta_record(), *records])
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError,
+            "semantic id 'SEM-CREATE-001' does not match axis 'delete'",
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+    def test_unmigrated_semantic_axis_is_rejected(self):
+        records = semantic_records()
+        records[0]["axis"] = "visibility"
+        self.write_records([meta_record(), *records])
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError,
+            "semantic axis is not migrated: visibility",
         ):
             docs_catalog.load_catalog(self.catalog, repo_root=self.root)
 
@@ -597,6 +977,52 @@ class ValidationTests(CatalogTestCase):
         ):
             docs_catalog.load_catalog(self.catalog, repo_root=self.root)
 
+    def test_java_class_mapping_key_must_match_source_stem(self):
+        meta = meta_record()
+        classes = meta["reference_resolvers"]["java"]["classes"]
+        classes["DifferentTestName"] = classes.pop("TestRename")
+        self.write_records([meta, *semantic_records()])
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError,
+            "Java class key must match source stem 'TestRename'",
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+    def test_inherited_java_symbol_requires_local_class_mapping(self):
+        meta = meta_record()
+        del meta["reference_resolvers"]["java"]["classes"][
+            "ITestCephContractRename"
+        ]
+        self.write_records([meta, *semantic_records()])
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError,
+            "inherited Java symbol class has no valid local class mapping",
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+    def test_inherited_java_symbol_requires_official_hadoop_test_source(self):
+        invalid_targets = [
+            "url:https://example.test/AbstractContractRenameTest.java",
+            (
+                "url:https://github.com/apache/hadoop/blob/rel/release-3.3.6/"
+                "hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/"
+                "fs/contract/AbstractContractRenameTest.java"
+            ),
+            "path:README.md",
+        ]
+        for target in invalid_targets:
+            with self.subTest(target=target):
+                meta = meta_record()
+                meta["reference_resolvers"]["java"]["symbols"][
+                    "ITestCephContractRename#testInherited"
+                ] = target
+                self.write_records([meta, *semantic_records()])
+                with self.assertRaisesRegex(
+                    docs_catalog.CatalogValidationError,
+                    "inherited symbol target must be an official Hadoop 3.3.6 test Java URL",
+                ):
+                    docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
     def test_record_ids_reject_spaces_and_slashes(self):
         for invalid_id in ("BAD ID", "BAD/ID", "lowercase"):
             with self.subTest(record_id=invalid_id):
@@ -618,7 +1044,10 @@ class ValidationTests(CatalogTestCase):
                 record = run_record()
                 record.pop("commit")
                 record.update(descriptor)
-                self.write_records(self.records_with(record))
+                records = self.records_with(record)
+                if descriptor.get("revision_unknown") is True:
+                    records[0]["historical_revision_unknown_runs"] = [record["id"]]
+                self.write_records(records)
                 docs_catalog.load_catalog(self.catalog, repo_root=self.root)
 
         invalid = run_record()
@@ -637,6 +1066,31 @@ class ValidationTests(CatalogTestCase):
             docs_catalog.load_catalog(self.catalog, repo_root=self.root)
         self.assertIn("'worktree_base' must be a SHA-like string", str(raised.exception))
         self.assertIn("dirty:true", str(raised.exception))
+
+    def test_new_runs_require_commands_but_migrated_history_may_omit_them(self):
+        record = run_record()
+        record["commands"] = []
+        self.write_records(self.records_with(record))
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError, "'commands' must not be empty"
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+        record.pop("commit")
+        record["revision_unknown"] = True
+        records = self.records_with(record)
+        records[0]["historical_revision_unknown_runs"] = [record["id"]]
+        self.write_records(records)
+        docs_catalog.load_catalog(self.catalog, repo_root=self.root)
+
+    def test_run_date_must_not_be_in_the_future(self):
+        record = run_record()
+        record["date"] = (dt.date.today() + dt.timedelta(days=1)).isoformat()
+        self.write_records(self.records_with(record))
+        with self.assertRaisesRegex(
+            docs_catalog.CatalogValidationError, "run date must not be in the future"
+        ):
+            docs_catalog.load_catalog(self.catalog, repo_root=self.root)
 
 
 class QueryAndShowTests(CatalogTestCase):

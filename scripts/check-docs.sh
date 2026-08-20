@@ -324,27 +324,34 @@ UNKNOWN = '\u672a\u77e5'
 EMPTY_CASE = '\u2014'
 owned: set[str] = set()
 seen_coverage = False
-semantic_axes = {
-    'rename', 'create', 'delete', 'sync', 'visibility', 'identity', 'append',
-    'mkdirs', 'path-entrypoint', 'metadata', 'read', 'status-defaults',
-    'block-location',
+migrated_axes = {'rename', 'create', 'delete', 'sync', 'append', 'mkdirs'}
+# Migrated per-axis ranges are owned and validated by docs-catalog.py. Keep only the legacy Markdown
+# row inventory here so adding or migrating an operation does not require duplicate count edits.
+expected_rows = {
+    'visibility': 5,
+    'identity': 20,
+    'path-entrypoint': 10,
+    'metadata': 13,
+    'read': 10,
+    'status-defaults': 8,
+    'block-location': 14,
 }
+semantic_axes = set(expected_rows) | migrated_axes
 computed: dict[str, Counter[str]] = {axis: Counter() for axis in semantic_axes}
-expected_inventory = {
-    'rename': {'rows': 27, 'UNIT': 18, 'CONTRACT': 4, 'CLUSTER': 6, 'SPIKE': 1, 'NONE': 8},
-    'create': {'rows': 21, 'UNIT': 11, 'CONTRACT': 2, 'CLUSTER': 1, 'SPIKE': 0, 'NONE': 10},
-    'delete': {'rows': 10, 'UNIT': 7, 'CONTRACT': 2, 'CLUSTER': 1, 'SPIKE': 0, 'NONE': 3},
-    'sync': {'rows': 16, 'UNIT': 7, 'CONTRACT': 3, 'CLUSTER': 0, 'SPIKE': 0, 'NONE': 8},
-    'visibility': {'rows': 5, 'UNIT': 1, 'CONTRACT': 1, 'CLUSTER': 1, 'SPIKE': 1, 'NONE': 1},
-    'identity': {'rows': 20, 'UNIT': 11, 'CONTRACT': 0, 'CLUSTER': 1, 'SPIKE': 6, 'NONE': 6},
-    'append': {'rows': 5, 'UNIT': 3, 'CONTRACT': 0, 'CLUSTER': 1, 'SPIKE': 0, 'NONE': 2},
-    'mkdirs': {'rows': 10, 'UNIT': 7, 'CONTRACT': 1, 'CLUSTER': 0, 'SPIKE': 0, 'NONE': 3},
-    'path-entrypoint': {'rows': 10, 'UNIT': 9, 'CONTRACT': 0, 'CLUSTER': 3, 'SPIKE': 0, 'NONE': 0},
-    'metadata': {'rows': 13, 'UNIT': 12, 'CONTRACT': 1, 'CLUSTER': 2, 'SPIKE': 0, 'NONE': 1},
-    'read': {'rows': 10, 'UNIT': 9, 'CONTRACT': 0, 'CLUSTER': 1, 'SPIKE': 0, 'NONE': 1},
-    'status-defaults': {'rows': 8, 'UNIT': 7, 'CONTRACT': 0, 'CLUSTER': 1, 'SPIKE': 0, 'NONE': 1},
-    'block-location': {'rows': 14, 'UNIT': 12, 'CONTRACT': 0, 'CLUSTER': 5, 'SPIKE': 0, 'NONE': 2},
+# Only legacy Markdown tables need a second structural inventory. Migrated Coverage and
+# Classification counts are derived directly from catalog records; duplicating them here would make
+# one semantic edit require maintenance in two canonical-looking locations.
+expected_coverage = {
+    'visibility': {'UNIT': 1, 'CONTRACT': 1, 'CLUSTER': 1, 'SPIKE': 1, 'NONE': 1},
+    'identity': {'UNIT': 11, 'CONTRACT': 0, 'CLUSTER': 1, 'SPIKE': 6, 'NONE': 6},
+    'path-entrypoint': {'UNIT': 9, 'CONTRACT': 0, 'CLUSTER': 3, 'SPIKE': 0, 'NONE': 0},
+    'metadata': {'UNIT': 12, 'CONTRACT': 1, 'CLUSTER': 2, 'SPIKE': 0, 'NONE': 1},
+    'read': {'UNIT': 9, 'CONTRACT': 0, 'CLUSTER': 1, 'SPIKE': 0, 'NONE': 1},
+    'status-defaults': {'UNIT': 7, 'CONTRACT': 0, 'CLUSTER': 1, 'SPIKE': 0, 'NONE': 1},
+    'block-location': {'UNIT': 12, 'CONTRACT': 0, 'CLUSTER': 5, 'SPIKE': 0, 'NONE': 2},
 }
+if set(expected_coverage) != set(expected_rows):
+    errors.append('Coverage inventory axes must match the legacy semantic axes')
 current_axis: str | None = None
 catalog_semantics = 0
 
@@ -363,8 +370,8 @@ for lineno, line in enumerate(catalog.read_text(encoding='utf-8').splitlines(), 
     if axis not in semantic_axes:
         errors.append(f'{catalog}:{lineno}: unknown semantic axis: {axis}')
         continue
-    if axis != 'rename':
-        errors.append(f'{catalog}:{lineno}: only rename is migrated in this experiment')
+    if axis not in migrated_axes:
+        errors.append(f'{catalog}:{lineno}: semantic axis is not migrated: {axis}')
     coverage = set(record.get('coverage', []))
     computed[axis]['rows'] += 1
     computed[axis].update(coverage & allowed_coverage)
@@ -378,9 +385,6 @@ for lineno, line in enumerate(catalog.read_text(encoding='utf-8').splitlines(), 
         if test_id not in defined:
             errors.append(f'{catalog}:{lineno}: cites undefined case ID: {test_id}')
     seen_coverage = True
-
-if catalog_semantics != 27:
-    errors.append(f'{catalog}: expected 27 migrated rename records, found {catalog_semantics}')
 
 matrix_lines = matrix.read_text(encoding='utf-8').splitlines()
 for index, line in enumerate(matrix_lines):
@@ -400,8 +404,10 @@ for index, line in enumerate(matrix_lines):
     following = matrix_lines[index + 1] if index + 1 < len(matrix_lines) else ''
     if len(cells) not in {5, 8} or cells[0].startswith('---') or following.startswith('|---'):
         continue
-    if current_axis == 'rename':
-        errors.append(f'{matrix}:{lineno}: rename conditions must be catalog records, not table rows')
+    if current_axis in migrated_axes:
+        errors.append(
+            f'{matrix}:{lineno}: {current_axis} conditions must be catalog records, not table rows'
+        )
         continue
 
     migrated = len(cells) == 8
@@ -491,28 +497,23 @@ for index, line in enumerate(matrix_lines):
     if coverage != {'NONE'} and guard == EMPTY_CASE:
         errors.append(f'{matrix}:{lineno}: non-NONE Coverage requires a Guard')
 
-for axis, expected in expected_inventory.items():
-    observed = {
+if sum(expected_rows.values()) + catalog_semantics != 169:
+    errors.append(
+        'configured legacy rows plus validated catalog semantics must total 169'
+    )
+
+for axis in expected_rows:
+    expected = {'rows': expected_rows[axis]}
+    observed = {'rows': computed[axis]['rows']}
+    expected.update(expected_coverage[axis])
+    observed.update({
         key: computed[axis][key]
-        for key in ('rows', 'UNIT', 'CONTRACT', 'CLUSTER', 'SPIKE', 'NONE')
-    }
+        for key in ('UNIT', 'CONTRACT', 'CLUSTER', 'SPIKE', 'NONE')
+    })
     if observed != expected:
         errors.append(
             f'semantic inventory drift for {axis}: expected {expected}, observed {observed}'
         )
-
-expected_rename_classification = {
-    'MATCH': 20, 'DIFFERENT': 5, 'UNSUPPORTED': 0, 'UNKNOWN': 2,
-}
-observed_rename_classification = {
-    value: computed['rename'][value]
-    for value in ('MATCH', 'DIFFERENT', 'UNSUPPORTED', 'UNKNOWN')
-}
-if observed_rename_classification != expected_rename_classification:
-    errors.append(
-        'rename Classification drift: expected '
-        f'{expected_rename_classification}, observed {observed_rename_classification}'
-    )
 
 
 # A delegating case has no expectation of its own, so at least one record or row must supply one.

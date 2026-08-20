@@ -19,6 +19,19 @@
 | Architecture decisions | [`adr/`](adr/) |
 | Resolved history index | [`archive/`](archive/) |
 
+## Structured viewer quick start
+
+Run the viewer from the repository root on the `experiment/structured-docs-viewer` branch:
+
+```bash
+python3 scripts/docs-catalog.py validate
+python3 scripts/docs-catalog.py serve
+```
+
+On Windows, use `py scripts/docs-catalog.py serve` (or `python ...`) with the same forward-slash path.
+The server prints the local `/docs/viewer/` URL after it starts; do not open `index.html` through
+`file://`, because the page fetches `catalog.ndjson` over HTTP.
+
 ## Ownership rules
 
 - Maintain each fact in one canonical location. Other documents link to it or provide one sentence
@@ -28,9 +41,11 @@
 - `catalog.ndjson` owns migrated project-state, readiness, experiment-journal, and semantic records.
   `PROGRESS.md`, `READINESS.md`, and `EXPERIMENTS.md` are entry points rather than duplicate stores.
 - The semantic baseline owns expected behavior, basis, classification, guards, and structural Coverage
-  per decision condition. Migrated rename records live in `catalog.ndjson`; the remaining axes stay in
-  `SEMANTICS-MATRIX.md` until explicitly migrated. The case files own case identity, priority, and
-  required environment; run records and dated reports own execution observations.
+  per decision condition. Records for the six migrated operation axes—rename, create, delete, sync,
+  append, and mkdirs—live in `catalog.ndjson`; visibility, identity, path-entrypoint, metadata, read,
+  status-defaults, and block-location remain in `SEMANTICS-MATRIX.md` until explicitly migrated. The
+  case files own case identity, priority, and required environment; run records and dated reports own
+  execution observations.
 - Environment documents own topology and safety boundaries, not experiment results.
 - Reports record dated release-gate executions. Catalog `run` records provide the concise operational
   journal and evidence links. ADRs record architectural reasons. Archives contain one-line

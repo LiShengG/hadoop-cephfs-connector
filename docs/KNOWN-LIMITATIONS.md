@@ -144,5 +144,53 @@ and, when necessary, retain their evidence in a dated report.
   the return value drives caller control flow
 - Planned resolution: move the same-path decision after source-type and destination-directory handling,
   then add an exact unit guard
-- Tracking: no stable test ID yet; the uncovered decision is recorded in `SEMANTICS-MATRIX.md`
+- Tracking: no stable test ID yet; the uncovered decision is `SEM-RENAME-004`
 - Last verified: source inspection at `6e4e5bc`; no dated report covers this condition
+
+## LIM-011: Create flag validation and overwrite race
+
+- Status: OPEN
+- Affected scope: `createNonRecursive` flag overloads and concurrent overwriting create
+- Trigger: a caller supplies an unsupported `CreateFlag`, or another client creates the destination
+  after the connector's existence check
+- Impact: unsupported flags can be ignored instead of rejected; an overwriting create can fail with
+  `FileAlreadyExistsException` rather than atomically truncating the concurrently created file
+- Workaround: use only CREATE and OVERWRITE through the supported entry points, and retry a failed
+  overwriting create only after checking destination ownership and content
+- Planned resolution: validate the complete flag set before I/O and move overwrite arbitration into an
+  atomic native operation or document the final support boundary
+- Tracking: `SEM-CREATE-013`, `SEM-CREATE-015`; FN-17 covers no-overwrite contention, while no stable
+  test ID currently covers unsupported flag validation or the overwrite precheck race
+- Last verified: connector and Hadoop/HDFS 3.3.6 source inspection; no dated report covers either race
+
+## LIM-012: Root and recursive delete differ from HDFS atomicity
+
+- Status: OPEN
+- Affected scope: non-empty root deletion and recursive directory deletion
+- Trigger: deleting the root through either recursive mode, or encountering an error after a recursive
+  traversal has already removed children
+- Impact: the connector returns `false` instead of the HDFS non-empty-root exception for a
+  non-recursive call; a recursive root call clears children and returns `true` where HDFS preserves
+  them and returns `false`; any recursive traversal can expose a partially deleted tree after failure
+- Workaround: never use the filesystem root as a cleanup target; delete a test-owned non-root subtree
+  and treat recursive deletion as non-atomic
+- Planned resolution: align root outcomes with HDFS and define retry/ownership rules for partial
+  recursive cleanup
+- Tracking: `SEM-DELETE-005` through `SEM-DELETE-009`; FN-16 covers concurrent creation, while no
+  stable test ID currently injects recursive-delete failure
+- Last verified: connector and HDFS 3.3.6 source inspection; failure injection is not implemented
+
+## LIM-013: Concurrent append writers are not lease-exclusive
+
+- Status: OPEN
+- Affected scope: multiple clients appending to one file and `FSDataOutputStream#getPos()` reporting
+- Trigger: a second append stream opens while another writer is extending the same file
+- Impact: HDFS rejects the second writer through lease ownership, while the connector can open both;
+  each stream reports the length snapshot captured before its open, even as native `O_APPEND` writes at
+  the current end
+- Workaround: enforce one append writer per path outside the connector and do not use `getPos()` as a
+  shared-file length under concurrent append
+- Planned resolution: add an exact concurrency test and choose either lease-like exclusion or a
+  documented multi-writer position model
+- Tracking: `SEM-APPEND-004`; no stable test ID currently covers concurrent append writers
+- Last verified: connector source and HDFS 3.3.6 append tests; no connector concurrency test exists

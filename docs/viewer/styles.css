@@ -378,6 +378,26 @@ main {
   font-variant-numeric: tabular-nums;
 }
 
+.semantic-axis-summary {
+  margin-bottom: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.semantic-axis-counts {
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+}
+
+.semantic-axis-counts li {
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  border-radius: 0.4rem;
+  background: var(--neutral-bg);
+}
+
 .content-section + .content-section,
 .timeline,
 .backlinks {
